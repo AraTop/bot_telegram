@@ -14,7 +14,13 @@ import yookassa
 import tiktoken
 from fpdf import FPDF
 import io
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
+
+openai_api_key = os.getenv("OPENAI_API_KEY")
+telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 #test = datetime.now() + timedelta(days=-1)
 ADMINS = [5706003073, 2125819462]
 #user_subscriptions = [{'user_id': 2125819462, "subscription_name": 'test', 'price': 0, "end_date": test}]
@@ -33,7 +39,7 @@ wait_hour = 1
 subscriptions = []
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 # Установите API-ключ OpenAI
-openai.api_key = ""
+openai.api_key = openai_api_key
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,14 +56,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Добавление нового пользователя в список пользователей
     if not any(user['user_id'] == user_id for user in users):
         users.append({'user_id': user_id, 'username': username, 'role': 'Пользователь', 'balance': 100, 'daily_book_count': 0, 'last_book_date': None})
-        print(f"Пользователь {username} добавлен в список пользователей.")
 
     if user_id in ADMINS:
         for user in users:
             if user['user_id'] == user_id:
                 user['role'] = 'Администратор'
 
-    print(users)
     # Создаем меню
     await handle_menu(update, context)
 
@@ -1833,29 +1837,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         await update.message.reply_text("Используйте /start для выбора режима.")
-        #wait start(update, context)
 
 # Реализация режима "Чат с ИИ"
 async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    print(f'Чат с ИИ, что отправил пользователь: {user_message}')
-
-    if update.message.voice:
-        print('он отправил голосовое смс')
+    #print(f'Чат с ИИ, что отправил пользователь: {user_message}')
 
     # Получаем ID пользователя
     user_id = update.message.from_user.id
     # Убедитесь, что 'chat_context' инициализирован
     if 'chat_context' not in context.user_data:
         context.user_data['chat_context'] = []
-        print('добавлен "chat_context" в user_data')
+        #print('добавлен "chat_context" в user_data')
 
     # Добавляем сообщение пользователя в историю
     context.user_data['chat_context'].append({"role": "user", "content": user_message})
 
     # Ограничиваем историю до 10 сообщений
     if len(context.user_data['chat_context']) > 10:
-        print('больше 10 в истории чата, обрезаем берем только 10 последних')
+        #print('больше 10 в истории чата, обрезаем берем только 10 последних')
         context.user_data['chat_context'] = context.user_data['chat_context'][-10:]
 
     # Ищем пользователя
@@ -1879,7 +1879,6 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if subscription_chat_with_ai_is_true:
         # Если подписка не активна
         if active_subscription is None or active_subscription['end_date'] <= datetime.now():
-            print('Подписка не активна')
             # Проверяем, если пользователь уже есть в списке
             user_data = next((user for user in count_words_user if user['user_id'] == user_id), None)
 
@@ -1893,7 +1892,7 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Находим данные пользователя
             user_data = next(user for user in count_words_user if user['user_id'] == user_id)
             if user_data['count'] > count_limit_chat_with_ai:
-                print('лимит включен')
+                #print('лимит включен')
                 # Лимит превышен, проверяем, если reset_time уже установлено и не прошло необходимое время
                 current_time = datetime.now(MOSCOW_TZ)
 
@@ -1912,7 +1911,7 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Если оставшееся время больше 0, выводим в формате "x часов и y минут"
                 if time_left.days == 0 and hours_left == 0:
-                    print(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {minutes_left} минуты.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
+                    #print(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {minutes_left} минуты.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
                     await update.message.reply_text(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {minutes_left} минуты.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
                 else:
                     # Рассчитываем количество часов и минут, если есть часы
@@ -2167,7 +2166,7 @@ async def get_chatgpt_response(update: Update, message):
 
 # Главная функция
 def main():
-    application = Application.builder().token("7382197547:AAFTXmXfoSCQCBF937nzXffGBMXAbRLyGc4").build()
+    application = Application.builder().token(telegram_bot_token).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
