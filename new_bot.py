@@ -81,6 +81,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("⚙️ Режимы", callback_data="modes")],
         [InlineKeyboardButton("💳 Подписки", callback_data="subscriptions_menu"),
          InlineKeyboardButton("🎮 Игры", callback_data="game")],
+        [InlineKeyboardButton("📚 Моя библеотека", callback_data="my_library")],
         [InlineKeyboardButton("💰 Пополнить баланс", callback_data="menu_payment_systems")],
         [InlineKeyboardButton("🛠 Поддержка", callback_data="support")],
         [InlineKeyboardButton("✍️ Авторы", callback_data="authors")]
@@ -120,13 +121,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
         # Получаем баланс пользователя
-        for user in users:
-            if user['user_id'] == user_id:
-                balance = user['balance']
-                break
-        else:
-            print('Пользователя нет в списке users')
-            balance = 0
+        if user['user_id'] == user_id:
+            balance = user['balance']
 
         # Ищем активную подписку пользователя
         global user_subscriptions
@@ -157,11 +153,15 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             subscription_name = "Нет"
             subscription_status = "Нет активной подписки"
 
+        # Подсчёт количества книг в библиотеке
+        books_count = len(user.get('library', []))
+
         # Информация профиля
         profile_text = (
             "📋 <b>Ваш профиль</b>\n\n"
             f"🆔 <b>ID:</b> {user['user_id']}\n"
-            f"💰 <b>Баланс:</b> {balance} Руб.\n" 
+            f"💰 <b>Баланс:</b> {balance} Руб.\n"
+            f"📚 <b>Создано книг:</b> {books_count}\n"
             f"🛡 <b>Роль:</b> {user['role']}\n"
             f"👤 <b>Имя пользователя:</b> @{user['username']}\n"
             f"📜 <b>Подписка:</b> {subscription_name} ({subscription_status})"
@@ -175,6 +175,131 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Отправка профиля пользователю
         await query.edit_message_text(profile_text, parse_mode="HTML", reply_markup=reply_markup)
+
+    elif query.data == "my_library":
+        user_id = query.from_user.id
+        # Ищем пользователя
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user:
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            return
+
+        # Формируем список книг
+        if user.get('library'):
+            books_list = "\n".join(
+                [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
+            )
+            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней."
+            keyboard = [
+                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
+                for idx, book in enumerate(user['library'])
+            ]
+            keyboard.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")])
+        else:
+            library_text = "📚 Ваша библиотека пуста. Добавьте книги через поиск!"
+            keyboard = [
+                [InlineKeyboardButton("📚 Поиск книг", callback_data="search_books")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+            ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(library_text, reply_markup=reply_markup)
+
+    elif query.data.startswith("book_options_"):
+        user_id = query.from_user.id
+        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user or 'library' not in user or book_index >= len(user['library']):
+            await query.edit_message_text("⚠️ Книга не найдена или удалена.")
+            return
+
+        selected_book = user['library'][book_index]
+        book_title = selected_book['title']
+
+        # Текст и кнопки для выбранной книги
+        options_text = f"📘 Вы выбрали книгу: {book_title}\n\nВыберите действие:"
+        keyboard = [
+            [InlineKeyboardButton("📤 Прислать книгу в чат", callback_data=f"send_book_{book_index}")],
+            [InlineKeyboardButton("🗑️ Удалить книгу", callback_data=f"delete_book_{book_index}")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="my_library")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(options_text, reply_markup=reply_markup)
+
+    elif query.data.startswith("delete_book_"):
+        user_id = query.from_user.id
+        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user or 'library' not in user or book_index >= len(user['library']):
+            await query.edit_message_text("⚠️ Книга не найдена или уже удалена.")
+            return
+
+        # Удаляем файл книги
+        selected_book = user['library'][book_index]
+        file_path = selected_book['file_path']
+        book_title = selected_book['title']
+
+        try:
+            os.remove(file_path)  # Удаляем файл из папки media
+        except FileNotFoundError:
+            pass  # Если файл уже отсутствует, продолжаем
+
+        # Удаляем книгу из библиотеки пользователя
+        user['library'].pop(book_index)
+
+        # Обновляем сообщение о библиотеке
+        if user['library']:
+            books_list = "\n".join(
+                [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
+            )
+            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней."
+            keyboard = [
+                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
+                for idx, book in enumerate(user['library'])
+            ]
+            keyboard.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")])
+        else:
+            library_text = "📚 Ваша библиотека пуста. Добавьте книги через поиск!"
+            keyboard = [
+                [InlineKeyboardButton("📚 Поиск книг", callback_data="search_books")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+            ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"🗑️ Книга '{book_title}' была успешно удалена из вашей библиотеки.",
+            reply_markup=reply_markup
+        )
+
+    elif query.data.startswith("send_book_"):
+        user_id = query.from_user.id
+        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user or 'library' not in user or book_index >= len(user['library']):
+            await query.edit_message_text("⚠️ Книга не найдена или удалена.")
+            return
+
+        selected_book = user['library'][book_index]
+        file_path = selected_book['file_path']
+        book_title = selected_book['title']
+
+        # Отправляем книгу пользователю
+        try:
+            await query.message.reply_document(document=open(file_path, 'rb'), filename=f"{book_title}.pdf")
+        except FileNotFoundError:
+            await query.edit_message_text("⚠️ Файл книги не найден. Обратитесь к администратору.")
+            return
+
+        # Сообщение об успешной отправке
+        await query.edit_message_text(
+            f"📤 Книга {book_title} успешно отправлена в чат!\n\n",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="my_library")]])
+        )
 
     elif query.data == "modes":
         user_id = query.from_user.id
@@ -191,7 +316,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Выберите режим:", reply_markup=reply_markup)
+        await query.edit_message_text("Выберите режим", reply_markup=reply_markup)
 
     # Обработка выбора системы оплаты
     elif query.data == "menu_payment_systems":
@@ -211,7 +336,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Отправляем сообщение с выбором системы оплаты
-        await query.edit_message_text("Выберите систему оплаты для пополнения баланса:", reply_markup=reply_markup)
+        await query.edit_message_text("Выберите систему оплаты для пополнения баланса", reply_markup=reply_markup)
 
     elif query.data == "yookassa_top_up_balance":
         user_id = query.from_user.id
@@ -1093,9 +1218,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     # Обработка кнопки "Авторы"
     elif query.data == "authors":
         authors_text = (
-            "Бот создан разработчиками:\n"
-            "Grigoryan Grigory - @AraTop4k\n"
-            "Zoryan Arman - @wh1zzi"
+            "👨‍💻 <b>Наши разработчики</b>\n\n"
+            "Бот был создан командой талантливых разработчиков, и мы рады представить их вам:\n\n"
+            "💡 <b>Zoryan Arman</b> — @wh1zzi\n"
+            "💡 <b>Grigoryan Grigory</b> — @AraTop4k\n\n"
+            "Они вложили свою душу в создание этого бота, чтобы улучшить ваш опыт работы с ним. Благодарим за поддержку! 🙏\n\n"
+            "📚 <i>Спасибо, что пользуетесь нашим сервисом!</i>"
         )
         # Клавиатура с кнопкой "Обратно"
         authors_keyboard = [
@@ -1104,11 +1232,19 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(authors_keyboard)
 
         # Отправка сообщения с кнопкой
-        await query.edit_message_text(authors_text, reply_markup=reply_markup)
+        await query.edit_message_text(authors_text, parse_mode="HTML", reply_markup=reply_markup)
 
     # Обработка кнопки "Поддержка"
     elif query.data == "support":
-        support_text = "Со всеми вопросами обращайтесь к данному человеку:\nRuzanna - @ruzanna_grigoryan7"
+        support_text = (
+            "💬 <b>Поддержка пользователей</b>\n\n"
+            "Если у вас возникли вопросы, проблемы или предложения, вы всегда можете обратиться за помощью. Наша команда готова помочь вам!\n\n"
+            "📩 <b>Контакты:</b>\n"
+            "👩‍💼 Ruzanna — @ruzanna_grigoryan7\n"
+            "\n"
+            "Вы также можете написать в поддержку, и мы постараемся ответить вам в кратчайшие сроки. Ваше мнение очень важно для нас! 🙌\n\n"
+            "📚 <i>Спасибо, что пользуетесь нашим сервисом!</i>"
+        )
         # Клавиатура с кнопкой "Обратно"
         support_keyboard = [
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
@@ -1116,7 +1252,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(support_keyboard)
 
         # Отправка сообщения с кнопкой
-        await query.edit_message_text(support_text, reply_markup=reply_markup)
+        await query.edit_message_text(support_text, parse_mode="HTML", reply_markup=reply_markup)
     
     # Обработка кнопки "Игры"
     elif query.data == "game":
@@ -1575,11 +1711,15 @@ async def search_user(update, context):
         subscription_name = "Нет"
         subscription_status = "Нет активной подписки"
 
+    # Подсчёт количества книг в библиотеке
+    books_count = len(user.get('library', []))
+
     # Если пользователь найден, выводим его информацию
     user_info = (
         f"Информация о пользователе:\n\n"
         f"🆔 ID: {user['user_id']}\n"
         f"💰 Баланс: {user['balance']} Руб.\n"
+        f"📚 Создано книг: {books_count}\n"
         f"🛡 Role: {user.get('role', 'Не указано')}\n"
         f"👤 Имя пользователя: @{user['username']}\n"
         f"📜 Подписка: {subscription_name} ({subscription_status})\n"
@@ -1942,6 +2082,7 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del user['reset_time']  # Убираем время сброса
 
 async def generate_pdf_and_send(update, context, full_text, exact_title):
+    user_id = update.message.from_user.id
     # Создание PDF
     pdf = FPDF()
     pdf.add_font('Garamond', '', 'Garamond.ttf', uni=True)  # Подключение шрифта Garamond
@@ -1951,24 +2092,52 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     # Разбиваем текст на строки для PDF
     pdf.multi_cell(0, 10, full_text)
 
+    # Проверяем библиотеку пользователя
+    user = next((u for u in users if u['user_id'] == user_id), None)
+    if not user:
+        await update.message.reply_text("⚠️ Ошибка: пользователь не найден. Обратитесь к администратору.")
+        return
+
+    if "library" not in user:
+        user['library'] = []
+    
+    # Генерируем уникальное название книги
+    unique_title = exact_title
+    suffix = 0
+    while any(book['title'] == unique_title for book in user['library']):
+        suffix += 1
+        unique_title = f"{exact_title}_{suffix}"
+
+    # Уникальное имя файла
+    file_name = f"{user_id}_{unique_title}.pdf"
+    file_path = f"media/{file_name}"
+
+    # Сохраняем PDF
+    pdf.output(file_path)
+
     # Сохраняем PDF в буфер
     pdf_output = io.BytesIO()
     pdf_output.write(pdf.output(dest='S').encode('latin1'))  # Сохраняем PDF как строку в буфер
     pdf_output.seek(0)  # Перемещаем указатель в начало буфера
 
     # Отправляем PDF пользователю
-    await update.message.reply_document(document=pdf_output, filename=f"{exact_title}.pdf")
+    #await update.message.reply_document(document=pdf_output, filename=f"{unique_title}.pdf")
 
-# Разделение текста на части по лимиту токенов
-async def split_text_into_chunks(text, max_tokens, model="gpt-3.5-turbo"):
-    encoding = tiktoken.encoding_for_model(model)
-    tokens = encoding.encode(text)
-    chunks = []
-    while len(tokens) > max_tokens:
-        chunks.append(encoding.decode(tokens[:max_tokens]))
-        tokens = tokens[max_tokens:]
-    chunks.append(encoding.decode(tokens))
-    return chunks
+    # Добавляем книгу в библиотеку
+    user['library'].append({
+        "title": unique_title,
+        "file_path": file_path,  # Сохраняем полный путь к файлу
+        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+    # Уведомляем пользователя
+    await update.message.reply_text(
+        f"📚 Книга {unique_title} готова! 🎉\n📚 Книга успешно добавлена в вашу библиотеку! 🎉",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library')],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')]
+        ])
+    )
 
 async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_pages: int):
     """Асинхронная обработка создания книги."""
@@ -2021,10 +2190,6 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
     user['daily_book_count'] += 1
 
     await generate_pdf_and_send(update, context, full_text, exact_title)
-    await update.message.reply_text(
-        f"📚 Книга {exact_title} готова! 🎉",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')]])
-    )
     context.user_data.clear()
 
 async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2051,7 +2216,7 @@ async def search_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if daily_book_count >= count_limit_book_day:
         await update.message.reply_text(
             f"❌ Вы уже сделали {daily_book_count} книг сегодня.\n"
-            f"📆 Лимит книг на сегодня исчерпан.\nПопробуйте снова завтра! 🕒"
+            f"📆 Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒"
         )
         await handle_menu(update, context)
         return
@@ -2122,7 +2287,7 @@ async def get_chatgpt_response(update: Update, message):
             max_tokens=1000
         )
         answer = response.choices[0].message['content']
-        print('GPT ответ:', answer)
+        #print('GPT ответ:', answer)
         # Поиск точного названия книги в ответе
         found_title_match = re.search(r'"([^"]+)"', answer)
         exact_title = found_title_match.group(1) if found_title_match else None
@@ -2144,6 +2309,8 @@ async def get_chatgpt_response(update: Update, message):
                 print("Ошибка: Ответ не содержит 7 частей. ---_-_-_-_----___--__--_--__--_____---__--_--__--_-_-_-_---")
                 part_1, part_2, part_3, part_4, part_5, part_6, part_7 = [None] * 7
                 book_exists = 'не 7'
+                exact_title = None
+                list_parts = None
             else:
                 # Записываем каждую часть в отдельную переменную, пропуская пролог (часть до "1.")
                 part_1, part_2, part_3, part_4, part_5, part_6, part_7 = [part.strip() for part in parts[1:8]]
