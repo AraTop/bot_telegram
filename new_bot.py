@@ -6,21 +6,24 @@ from telegram.ext import (
     Application, MessageHandler, filters, CommandHandler, ContextTypes, CallbackQueryHandler
 )
 import asyncio
-import time
 import datetime
 import pytz
-from datetime import datetime, timedelta, time
-import yookassa
+from datetime import datetime, timedelta
 from fpdf import FPDF
 import io
 from dotenv import load_dotenv
 import os
+from yookassa import Configuration, Payment
+import uuid
 
 load_dotenv()
 
+Configuration.account_id = os.getenv("account_id")
+Configuration.secret_key = os.getenv("secret_key")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-test = datetime.now() + timedelta(days=1)
+
+test = datetime.now() + timedelta(days=-1)
 ADMINS = [5706003073, 2125819462]
 user_subscriptions = [{'user_id': 2125819462, "subscription_name": 'test', 'price': 0, "end_date": test}]
 user_subscriptions = []
@@ -96,6 +99,42 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Иначе создаём новое сообщение
         await update.message.reply_text(greeting_message , reply_markup=reply_markup)
 
+# Функция для асинхронной проверки статуса платежа
+async def check_payment_status(payment_id, user_id, subscription_name, subscription_price, query):
+    while True:
+        updated_payment = Payment.find_one(payment_id)
+        if updated_payment.status == "succeeded":
+            # Оплата успешна, активируем подписку
+            end_date = datetime.now() + timedelta(days=30)
+
+            user_subscriptions.append({
+                "user_id": user_id,
+                "subscription_name": subscription_name,
+                "price": subscription_price,
+                "end_date": end_date
+            })
+
+            await query.edit_message_text(
+                f"✅ Подписка '{subscription_name}' успешно активирована!\n\n"
+                f"📅 Действует до {end_date.strftime('%d.%m.%Y')}.",
+                reply_markup=InlineKeyboardMarkup([ 
+                    [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+                ])
+            )
+            break
+        elif updated_payment.status == "canceled":
+            # Оплата отменена
+            await query.edit_message_text(
+                f"⚠️ Оплата подписки '{subscription_name}' была отменена.\nПопробуйте снова.",
+                reply_markup=InlineKeyboardMarkup([ 
+                    [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+                ])
+            )
+            break
+        else:
+            # Ждем некоторое время перед следующей проверкой
+            await asyncio.sleep(10)
+
 async def generate_options_menu(options, context):
     # Тексты кнопок в зависимости от языка
     option_texts = {
@@ -169,7 +208,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
 
         # Формируем список книг
@@ -177,7 +216,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             books_list = "\n".join(
                 [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
             )
-            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней."
+            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней"
             keyboard = [
                 [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
                 for idx, book in enumerate(user['library'])
@@ -199,14 +238,14 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или удалена.")
+            await query.edit_message_text("⚠️ Книга не найдена или удалена")
             return
 
         selected_book = user['library'][book_index]
         book_title = selected_book['title']
 
         # Текст и кнопки для выбранной книги
-        options_text = f"📘 Вы выбрали книгу: {book_title}\n\nВыберите действие:"
+        options_text = f"📘 Вы выбрали книгу: {book_title}\n\nВыберите действие"
         keyboard = [
             [InlineKeyboardButton("📤 Прислать книгу в чат", callback_data=f"send_book_{book_index}")],
             [InlineKeyboardButton("🗑️ Удалить книгу", callback_data=f"delete_book_{book_index}")],
@@ -222,7 +261,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или уже удалена.")
+            await query.edit_message_text("⚠️ Книга не найдена или уже удалена")
             return
 
         # Удаляем файл книги
@@ -243,7 +282,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             books_list = "\n".join(
                 [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
             )
-            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней."
+            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней"
             keyboard = [
                 [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
                 for idx, book in enumerate(user['library'])
@@ -258,7 +297,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"🗑️ Книга '{book_title}' была успешно удалена из вашей библиотеки.",
+            f"🗑️ Книга '{book_title}' была успешно удалена из вашей библиотеки",
             reply_markup=reply_markup
         )
 
@@ -268,7 +307,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или удалена.")
+            await query.edit_message_text("⚠️ Книга не найдена или удалена")
             return
 
         selected_book = user['library'][book_index]
@@ -279,7 +318,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.message.reply_document(document=open(file_path, 'rb'), filename=f"{book_title}.pdf")
         except FileNotFoundError:
-            await query.edit_message_text("⚠️ Файл книги не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Файл книги не найден. Обратитесь к администратору")
             return
 
         # Сообщение об успешной отправке
@@ -288,33 +327,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="my_library")]])
         )
 
-    # Обработка выбора системы оплаты
-    elif query.data == "menu_payment_systems":
-        user_id = query.from_user.id
-        user = next((u for u in users if u['user_id'] == user_id), None)
-
-        if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
-            return
-
-        # Клавиатура с доступными системами оплаты
-        keyboard = [
-            [InlineKeyboardButton("💳 Юкасса", callback_data="yookassa_top_up_balance")],
-            [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Отправляем сообщение с выбором системы оплаты
-        await query.edit_message_text("Выберите систему оплаты для пополнения баланса", reply_markup=reply_markup)
-
     elif query.data == "yookassa_top_up_balance":
         user_id = query.from_user.id
         # Ищем пользователя
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
 
         # Клавиатура с предложенными суммами пополнения
@@ -356,16 +375,16 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         )
         if active_subscription:
             # Если подписка активна
-            subscription_status = "🟢 Активная подписка"
-            subscription_text = f"📅 Действует до {active_subscription['end_date'].strftime('%d.%m.%Y')}"
+            subscription_status = "🟢 подписка активна"
+            subscription_text = f"✅ Ваша подписка '{active_subscription['subscription_name']}' активна."
         elif expired_subscription:
             # Если есть истекшая подписка
             subscription_status = "🔴 Подписка истекла"
-            subscription_text = f"❌ Ваша подписка '{expired_subscription['subscription_name']}' истекла. Пожалуйста, оформите новую."
+            subscription_text = f"❌ Ваша подписка '{expired_subscription['subscription_name']}' истекла, оформите новую"
         else:
             # Если подписок не было
             subscription_status = "⚪ Нет подписки"
-            subscription_text = "❌ У вас нет подписки. Оформите подписку, чтобы получить доступ к функциям."
+            subscription_text = "❌ У вас нет подписки.\n💸 Оформите подписку, чтобы получить доступ к функциям"
 
         # Генерация клавиатуры с обновленным текстом
         subscriptions_keyboard = [
@@ -377,7 +396,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Отображение сообщения с выбором
         await query.edit_message_text(
-            f"{subscription_text}\n\nВыберите действие с подписками:",
+            f"{subscription_text}\n\n✨ Выберите действие",
             reply_markup=reply_markup
         )
 
@@ -407,13 +426,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 # Если срок действия истек
                 message = (
-                    f"❌ Ваша подписка '{active_subscription['subscription_name']}' истекла.\n"
+                    f"❌ Ваша подписка '{active_subscription['subscription_name']}' истекла\n"
                     f"💰 Цена была: {active_subscription['price']} руб.\n"
                     f"📅 Срок действия истек: {active_subscription['end_date'].strftime('%d.%m.%Y')}"
                 )
         else:
             # Если подписки у пользователя нет
-            message = "⚠️ У вас пока нет активных подписок."
+            message = "⚠️ У вас пока нет подписки"
 
         # Кнопка "Назад"
         back_button = [[InlineKeyboardButton("🔙 Назад", callback_data="subscriptions_menu")]]
@@ -437,7 +456,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
                 [InlineKeyboardButton("🔙 Назад", callback_data="subscriptions_menu")]
             ]
             reply_markup = InlineKeyboardMarkup(no_subscriptions_keyboard)
-            await query.edit_message_text("⚠️ Подписок пока нет.", reply_markup=reply_markup)
+            await query.edit_message_text("⚠️ Подписок пока нет", reply_markup=reply_markup)
         else:
             # Генерация клавиатуры с подписками
             subscriptions_keyboard = [
@@ -446,7 +465,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             # Добавляем кнопку "Обратно"
             subscriptions_keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="subscriptions_menu")])
             reply_markup = InlineKeyboardMarkup(subscriptions_keyboard)
-            await query.edit_message_text("Выберите подписку:", reply_markup=reply_markup)
+            await query.edit_message_text("✨ Выберите подписку", reply_markup=reply_markup)
     
     elif query.data.startswith("view_"):
         user_id = query.from_user.id
@@ -465,21 +484,30 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
         if selected_subscription:
-            price = selected_subscription["price"]  # Получаем цену из словаря
+            price = selected_subscription["price"]
+            duration_days = 30  # Срок подписки в днях
+            end_date = datetime.now() + timedelta(days=duration_days)
+            # Формирование красивого сообщения
+            message = (
+                f"📝 Оформление Подписки\n\n"
+                f"✨ Подписка: {subscription_name}\n"
+                f"⏳ Срок действия: {duration_days} дней\n"
+                f"💰 Цена: {price} руб.\n"
+                f"📅 Закончится: {end_date.strftime('%d.%m.%Y')}\n\n"
+                "🔑 Оформите подписку, чтобы получить доступ ко всем возможностям!"
+            )
             
-            # Показываем информацию о подписке
+            # Клавиатура
             keyboard = [
-                [InlineKeyboardButton("💸 Купить", callback_data=f"buy_{subscription_name}")],
-                [InlineKeyboardButton("🔙 Отмена", callback_data="subscriptions")]
+                [InlineKeyboardButton("💸 Оформить подписку", callback_data=f"buy_{subscription_name}")],
+                [InlineKeyboardButton("🔙 Назад к подпискам", callback_data="subscriptions")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
-                f"Подписка: {subscription_name}\nЦена: {price} руб.",
-                reply_markup=reply_markup
-            )
+            # Отправляем сообщение
+            await query.edit_message_text(message, parse_mode="Markdown", reply_markup=reply_markup)
         else:
-            await query.edit_message_text("Подписка не найдена.")
+            await query.edit_message_text("❌ Подписка не найдена.")
     
     # Покупка подписки
     elif query.data.startswith("buy_"):
@@ -504,7 +532,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(
                 f"⚠️ У вас уже есть активная подписка: {active_subscription['subscription_name']}.\n"
                 f"📅 Действующая до {active_subscription['end_date'].strftime('%d.%m.%Y')}.\n\n"
-                "Вы не можете купить новую подписку, пока не истечёт текущая.\nЛибо пока не отмените активную подписку.",
+                "Вы не можете купить новую подписку, пока не истечёт текущая.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
                 ])
@@ -519,8 +547,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             if expired_subscription:
                 # Удаляем подписку из списка
                 user_subscriptions = [sub for sub in user_subscriptions if sub != expired_subscription]
-                print("Удалено:", expired_subscription)
-                print("Оставшиеся подписки:", user_subscriptions)
+                #print("Удалено:", expired_subscription)
+                #print("Оставшиеся подписки:", user_subscriptions)
 
         # Поиск подписки в списке
         selected_subscription = next(
@@ -530,44 +558,41 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if selected_subscription:
             subscription_price = selected_subscription["price"]
 
-            # Находим пользователя в списке users
-            user = next((u for u in users if u['user_id'] == user_id), None)
+            # Генерация ссылки на оплату через Юкассу
+            payment = Payment.create({
+                "amount": {
+                    "value": f"{subscription_price:.2f}",
+                    "currency": "RUB"
+                },
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": "https://t.me/FastPage_Bot"  # Укажите реальный URL возврата
+                },
+                "capture": True,
+                "description": f"Оплата подписки: {subscription_name}"
+            }, uuid.uuid4())
 
-            if user:
-                balance = user.get('balance', 0)  # Получаем баланс пользователя, если ключа 'balance' нет, возвращаем 0
+            # Ссылка на оплату
+            payment_url = payment.confirmation.confirmation_url
 
-                # Проверяем, достаточно ли средств
-                if balance >= subscription_price:
-                    # Списываем деньги
-                    user['balance'] -= subscription_price  # Обновляем баланс в списке users
-                    
-                    # Вычисляем дату окончания подписки
-                    end_date = datetime.now() + timedelta(days=30)
-                    
-                    # Добавляем информацию о подписке в список
-                    user_subscriptions.append({
-                        "user_id": user_id,
-                        "subscription_name": subscription_name,
-                        "price": subscription_price,
-                        "end_date": end_date
-                    })
-                    
-                    # Подтверждаем покупку
-                    await query.edit_message_text(
-                        f"✅ Вы успешно купили подписку '{subscription_name}' за {subscription_price} руб.\n\n"
-                        f"📅 Подписка активна до {end_date.strftime('%d.%m.%Y')}.",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
-                        ])
-                    )
-                else:
-                    # Недостаточно средств
-                    await query.edit_message_text(
-                        f"У вас недостаточно средств для покупки подписки '{subscription_name}'.\n"
-                        "Пожалуйста, пополните свой счёт."
-                    )
+            await query.edit_message_text(
+                f"💡 **Для активации подписки '{subscription_name}' выполните следующие шаги:**\n\n"
+                f"1️⃣ Нажмите на кнопку 💳 **Оплатить** ниже и перейдите на сайт оплаты.\n"
+                f"3️⃣ После успешной оплаты подписка будет активна!\n\n"
+                f"⏳ *Ожидается подтверждение оплаты...*\n"
+                f"Если вы передумали, **🔙 Назад в меню**.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 Оплатить", url=payment_url)],  # Кнопка для перехода на оплату
+                    [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]  # Кнопка возврата в меню
+                ])
+            )
+            # Асинхронная проверка статуса платежа
+            payment_id = payment.id
+            asyncio.create_task(check_payment_status(payment_id, user_id, subscription_name, subscription_price, query))
+    
         else:
-            await query.edit_message_text("Подписка не найдена.")
+            await query.edit_message_text("Подписка не найдена")
 
     elif query.data == "admin_panel":
         user_id = update.callback_query.from_user.id
@@ -575,14 +600,14 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:####################################################################################################################################
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
         # Админ панель
         # Проверка на админа
         user_id = update.callback_query.from_user.id  # Получаем ID пользователя
         if user_id not in ADMINS:
             await query.answer()  # Отвечаем на запрос, чтобы пользователь не ждал
-            await query.edit_message_text("У вас нет прав для доступа к админ панели.")
+            await query.edit_message_text("У вас нет прав для доступа к админ панели")
             return
         admin_keyboard = [
             [InlineKeyboardButton("👥 Управление пользователями", callback_data="users_admin")],
@@ -601,12 +626,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
 
         # Проверка на админа
         if user_id not in ADMINS:
-            await query.edit_message_text("У вас нет прав для доступа к админ панели.")
+            await query.edit_message_text("У вас нет прав для доступа к админ панели")
             return
 
         # Клавиатура для управления пользователями
@@ -615,7 +640,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
         ]
         reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
-        await query.edit_message_text("Выберите действие с пользователями:", reply_markup=reply_markup)
+        await query.edit_message_text("Выберите действие с пользователями", reply_markup=reply_markup)
 
     elif query.data == "search_user":
         user_id = update.callback_query.from_user.id
@@ -623,13 +648,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:####################################################################################################################################
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
         # Управление подписками (для админа)
         # Проверка на админа
 
         if user_id not in ADMINS:
-            await query.edit_message_text("У вас нет прав для доступа к админ панели.")
+            await query.edit_message_text("У вас нет прав для доступа к админ панели")
             return
         admin_subscriptions_keyboard = [
             [InlineKeyboardButton("🔙 Назад", callback_data="users_admin")]
@@ -637,14 +662,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(admin_subscriptions_keyboard)
         context.user_data['current_mode'] = 'search_user'
         await query.edit_message_text(
-    "🔍 Пожалуйста, укажите **user_id** или **username** пользователя, которого хотите найти.\n"
-    "Пример: \n"
-    "- Для поиска по **user_id**: просто введите его число.\n"
-    "- Для поиска по **username**: введите имя_пользователя.\n"
-    "🔎 Мы постараемся найти этого пользователя для вас.",
-    reply_markup=reply_markup
-)
-
+            "🔍 Пожалуйста, укажите **user_id** или **username** пользователя, которого хотите найти.\n"
+            "Пример: \n"
+            "- Для поиска по **user_id**: просто введите его число.\n"
+            "- Для поиска по **username**: введите имя_пользователя.\n"
+            "🔎 Мы постараемся найти этого пользователя для вас.",
+            reply_markup=reply_markup
+        )
 
     elif query.data == "notifications":
         user_id = update.callback_query.from_user.id
@@ -653,13 +677,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = next((u for u in users if u['user_id'] == user_id), None)
 
         if not user:####################################################################################################################################
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
             return
         # Управление подписками (для админа)
         # Проверка на админа
 
         if user_id not in ADMINS:
-            await query.edit_message_text("У вас нет прав для доступа к админ панели.")
+            await query.edit_message_text("У вас нет прав для доступа к админ панели")
             return
         admin_subscriptions_keyboard = [
             [InlineKeyboardButton("📢 Для всех", callback_data="notify_all")],
@@ -669,7 +693,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
         ]
         reply_markup = InlineKeyboardMarkup(admin_subscriptions_keyboard)
-        await query.edit_message_text("Выберите аудиторию для уведомления:", reply_markup=reply_markup)
+        await query.edit_message_text("Выберите аудиторию для уведомления", reply_markup=reply_markup)
 
     elif query.data == "notify_single_user":
         user_id = update.callback_query.from_user.id
@@ -1435,11 +1459,46 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         # Ищем пользователя
         user = next((u for u in users if u['user_id'] == user_id), None)
 
-        if not user:####################################################################################################################################
+        if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
-        await query.edit_message_text("Вы включили режим 'Чат с ИИ'. Задавайте вопросы!")
-        context.user_data['current_mode'] = "chat_with_ai"
+
+        # Проверяем наличие подписки у пользователя
+        active_subscription = next(
+            (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] >= datetime.now()),
+            None
+        )
+        user_data = next((user for user in count_words_user if user['user_id'] == user_id), None)
+
+        if not user_data:
+            # Если пользователя нет в count_words_user, инициализируем с пустыми значениями
+            user_data = {'count': 0}
+
+        if not active_subscription:
+            # Для пользователей без подписки
+            sms_limit = user_data.get('count', 0)  # Лимит сообщений
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+            ])
+            message = (
+                f"📉 **У вас нет активной подписки**, и доступ к чату с ИИ ограничен.\n\n"
+                f"📱 Ваш текущий лимит на отправку сообщений: {sms_limit}/{count_limit_chat_with_ai}.\n\n"
+                f"💬 Вы можете продолжать использовать чат, пока не превысите лимит сообщений.\n"
+                f"Как только лимит будет исчерпан, доступ к Чату с ИИ будет ограничен, и начнётся отсчёт времени до снятия лимита.\n\n"
+                f"💡 Чтобы получить полный доступ и не ограничиваться лимитом, оформите подписку!\n💬 Задавайте ваши вопросы! Я всегда готов помочь вам. 😊"
+            )
+            await update.callback_query.message.reply_text(message, reply_markup=reply_markup)
+            context.user_data['current_mode'] = "chat_with_ai"
+        else:
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+            ])
+
+            await update.callback_query.message.reply_text(
+                "💬 Задавайте ваши вопросы! Я всегда готов помочь вам. 😊",
+                reply_markup=reply_markup
+            )
+            context.user_data['current_mode'] = "chat_with_ai"
 
 # Функция добавления подписки
 async def add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1737,63 +1796,6 @@ async def Limit_books_day_subscribe(update, context):
         context.user_data['current_mode'] = None
     except ValueError:
         await update.message.reply_text("Введите коректное число больше 0")
-
-# Обработка выбранной суммы для пополнения
-async def yookassa_top_up_balance(update, context):
-    user_id = update.message.from_user.id
-    user = next((u for u in users if u['user_id'] == user_id), None)
-
-    if not user:
-        await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
-        return
-    
-    # Проверка, что пользователь администратор
-    if user_id not in ADMINS:
-        await update.message.reply_text("У вас нет прав для отправки уведомлений.")
-        return
-
-    text = update.message.text.strip()
-
-    if context.user_data.get('current_mode') != 'yookassa_top_up_balance':
-        return
-
-    if not text:
-        await update.message.reply_text(f"Вы не указали сумму для пополнения.")
-        return
-
-    try:
-        number = int(text)
-
-        if number < 100:
-            await update.message.reply_text(f"Минимальная сумма пополнения 100 рублей.")
-            return
-        elif number > 5000:
-            await update.message.reply_text(f"Максимальная сумма пополнения 5000 рублей.")
-            return
-
-        # Генерация ссылки на оплату через Юкасса
-        payment = yookassa.Payment.create({
-            "amount": {"value": str(number), "currency": "RUB"},
-            "capture_mode": "AUTOMATIC",
-            "confirmation": {
-                "type": "redirect",
-                "return_url": "https://your_website.com/return_url"  # URL для возврата
-            },
-            "description": f"Пополнение баланса для пользователя {user_id}",
-        })
-
-        # Ссылка на оплату
-        payment_url = payment.confirmation.confirmation_url
-        await update.message.reply_text(f"Перейдите по ссылке для пополнения баланса: {payment_url}")
-
-        # Обновляем баланс пользователя после успешной оплаты (в будущем можно будет сделать автоматическое обновление)
-        user['balance'] = user.get('balance', 0) + number
-
-        # Возвращаемся в главное меню
-        await handle_menu(update, context)
-        context.user_data['current_mode'] = None
-    except ValueError:
-        await update.message.reply_text("Введите корректную сумму.")
 
 async def send_notification_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_text, reply_markup, target_group):
     user_id = update.message.from_user.id
@@ -2189,9 +2191,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif current_mode == 'Limit_books_day_subscribe':
         await Limit_books_day_subscribe(update, context)
-    
-    elif current_mode == 'yookassa_top_up_balance':
-        await yookassa_top_up_balance(update, context)
 
     elif current_mode == 'search_user':
         await search_user(update, context)
@@ -2205,14 +2204,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Реализация режима "Чат с ИИ"
 async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    #print(f'Чат с ИИ, что отправил пользователь: {user_message}')
 
     # Получаем ID пользователя
     user_id = update.message.from_user.id
     # Убедитесь, что 'chat_context' инициализирован
     if 'chat_context' not in context.user_data:
         context.user_data['chat_context'] = []
-        #print('добавлен "chat_context" в user_data')
 
     # Добавляем сообщение пользователя в историю
     context.user_data['chat_context'].append({"role": "user", "content": user_message})
@@ -2234,48 +2231,52 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
     )
 
-    # Если админ выкл.проверка подписки
+    # Если админ выключил проверку подписки
     if subscription_chat_with_ai_is_true:
         # Если подписка не активна
         if active_subscription is None or active_subscription['end_date'] <= datetime.now():
-            # Проверяем, если пользователь уже есть в списке
+            # Проверяем пользователя в списке count_words_user
             user_data = next((user for user in count_words_user if user['user_id'] == user_id), None)
 
+            # Если лимит сообщений исчерпан
             if user_data:
-                # Если пользователь есть в списке, увеличиваем count
-                user_data['count'] += 1
-            else:
-                # Если пользователя нет в списке, добавляем его с count = 1
-                count_words_user.append({'user_id': user_id, 'count': 1})
-
-            # Находим данные пользователя
-            user_data = next(user for user in count_words_user if user['user_id'] == user_id)
-            if user_data['count'] > count_limit_chat_with_ai:
-                #print('лимит включен')
-                # Лимит превышен, проверяем, если reset_time уже установлено и не прошло необходимое время
+                # Проверка сброса лимита
                 current_time = datetime.now(MOSCOW_TZ)
 
-                # Если у пользователя уже есть установленное время сброса и оно не прошло
-                if 'reset_time' in user_data and user_data['reset_time'] > current_time:
-                    reset_time = user_data['reset_time']
-                else:
-                    # Если нет установленного времени сброса или время прошло, устанавливаем новое
-                    reset_time = current_time + timedelta(hours=wait_hour)  # Время, когда сбросится лимит
-                    user_data['reset_time'] = reset_time  # Добавляем время сброса в запись
+                # Если время сброса истекло, сбрасываем лимит
+                if 'reset_time' in user_data and current_time >= user_data['reset_time']:
+                    user_data['count'] = 0
+                    del user_data['reset_time']
 
-                # Рассчитываем оставшееся время до сброса
+                # Увеличиваем счетчик сообщений
+                user_data['count'] += 1
+            else:
+                # Если пользователя нет, добавляем его в список
+                user_data = {'user_id': user_id, 'count': 1}
+                count_words_user.append(user_data)
+
+            # Проверка, превышен ли лимит
+            if user_data['count'] > count_limit_chat_with_ai:
+                current_time = datetime.now(MOSCOW_TZ)
+
+                # Устанавливаем или обновляем время сброса
+                if 'reset_time' not in user_data or current_time >= user_data['reset_time']:
+                    user_data['reset_time'] = current_time + timedelta(hours=wait_hour)
+
+                # Рассчитываем оставшееся время
+                reset_time = user_data['reset_time']
                 time_left = reset_time - current_time
                 hours_left = time_left.seconds // 3600
                 minutes_left = (time_left.seconds % 3600) // 60
 
-                # Если оставшееся время больше 0, выводим в формате "x часов и y минут"
-                if time_left.days == 0 and hours_left == 0:
-                    #print(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {minutes_left} минуты.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
-                    await update.message.reply_text(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {minutes_left} минуты.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
-                else:
-                    # Рассчитываем количество часов и минут, если есть часы
-                    await update.message.reply_text(f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n🔒 Ваш лимит будет автоматически сброшен через {hours_left} часов и {minutes_left} минут.\n\n💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!")
-                return  # Прерываем выполнение, пока не пройдет время сброса
+                # Сообщение о блокировке
+                await update.message.reply_text(
+                    f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n"
+                    f"🔒 Ваш лимит будет автоматически сброшен через "
+                    f"{hours_left} часов и {minutes_left} минут.\n\n"
+                    f"💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!"
+                )
+                return
 
     # Запрос к ChatGPT
     response = await openai.ChatCompletion.acreate(
@@ -2291,14 +2292,6 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['chat_context'].append({"role": "assistant", "content": ai_reply})
     
     await update.message.reply_text(ai_reply)
-
-    # Проверка на сброс лимита
-    # Если время сброса прошло, сбрасываем count и оставляем только user_id
-    for user in count_words_user:
-        # Проверяем, если у пользователя есть ключ 'reset_time'
-        if 'reset_time' in user and datetime.now(MOSCOW_TZ) >= user['reset_time']:
-            user['count'] = 0  # Сбрасываем счетчик сообщений
-            del user['reset_time']  # Убираем время сброса
 
 async def generate_pdf_and_send(update, context, full_text, exact_title):
     user_id = update.message.from_user.id
@@ -2486,11 +2479,11 @@ async def search_books(update, context):
         if daily_book_count >= count_limit_book_day:
             if context.user_data.get('book_language') == 'russian':
                 await update.message.reply_text(
-                f"❌ Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒"
+                f"❌ Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒\n📝 Либо оформите подписку."
                 )
             else:
                 await update.message.reply_text(
-                f"❌ The book limit for today has been reached.\nTry tomorrow! 🕒"
+                f"❌ The book limit for today has been reached.\nTry tomorrow! 🕒\n📝 Or subscribe."
                 )
 
             await handle_menu(update, context)
@@ -2514,9 +2507,9 @@ async def search_books(update, context):
             num_pages = int(book_title)
         except ValueError:
             if context.user_data.get('book_language') == 'russian':
-                await update.message.reply_text("Пожалуйста, укажите количество страниц числом")
+                await update.message.reply_text("✏️ Пожалуйста, укажите количество страниц числом")
             else:
-                await update.message.reply_text("Please indicate the number of pages as a number")
+                await update.message.reply_text("✏️ Please indicate the number of pages as a number")
             return
 
         if num_pages < 5 or num_pages > 50:
