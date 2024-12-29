@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import os
 from yookassa import Configuration, Payment
 import uuid
+from PyPDF2 import PdfWriter
 
 load_dotenv()
 
@@ -29,11 +30,13 @@ user_subscriptions = [{'user_id': 2125819462, "subscription_name": 'test', 'pric
 user_subscriptions = []
 users = []
 count_words_user = []
+
 # переменые для управление из админ панели
 subscription_chat_with_ai_is_true = True
+subscription_search_book_is_true = True
 count_limit_chat_with_ai = 10
 count_limit_book_in_subscribe_day = 10
-limit_page_book = 5
+limit_page_book = 20
 count_limit_book_day = 1
 wait_hour = 1
 
@@ -138,8 +141,8 @@ async def check_payment_status(payment_id, user_id, subscription_name, subscript
 async def generate_options_menu(options, context):
     # Тексты кнопок в зависимости от языка
     option_texts = {
-        "russian": ["Ключевые идеи и анализ", "Цитаты из книги", "Биография автора", "Критика книги"],
-        "english": ["Key Ideas and Analysis", "Quotes from the book", "Author's Biography", "Book Critique"]
+        "russian": ["Ключ.идеи,анализ", "Цитаты из книги", "Биография автора", "Критика книги"],
+        "english": ["Key Ideas, Analysis", "Quotes in the book", "Author's Biography", "Book Critique"]
     }
 
     action_texts = {
@@ -326,23 +329,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             f"📤 Книга {book_title} успешно отправлена в чат!\n\n",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="my_library")]])
         )
-
-    elif query.data == "yookassa_top_up_balance":
-        user_id = query.from_user.id
-        # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
-
-        if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
-            return
-
-        # Клавиатура с предложенными суммами пополнения
-        keyboard = [
-            [InlineKeyboardButton("🔙 Отмена", callback_data="menu_payment_systems")]
-        ]
-        context.user_data['current_mode'] = 'yookassa_top_up_balance'
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("📝 Укажите, на какую сумму хотите пополнить счет", reply_markup=reply_markup)
 
     elif query.data == "menu":
         user_id = query.from_user.id
@@ -810,15 +796,52 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("У вас нет прав для доступа к админ панели.")
             return
         admin_subscriptions_keyboard = [
+            [InlineKeyboardButton("✏️ Ограничение на макс. кол-во стрн. (без подписки)", callback_data="limit_page_book")],
             [InlineKeyboardButton("✏️ Лимит книг в день (без подписки):", callback_data="Limit_books_day")],
             [InlineKeyboardButton("✏️ Лимит книг в день (с подпиской)", callback_data="Limit_books_day_subscribe")],
-            [InlineKeyboardButton("✏️ Лимит страниц (без подписки)", callback_data="limit_page_book")],
+            [InlineKeyboardButton("🔒 Проверка подписки: Вкл/Выкл", callback_data="off_on_subscription_search_books")],
             [InlineKeyboardButton("📜 Информация о режиме", callback_data="info_search_books")],
             [InlineKeyboardButton("🔙 Назад", callback_data="modes_admin")]
         ]
         reply_markup = InlineKeyboardMarkup(admin_subscriptions_keyboard)
         await query.edit_message_text("Выберите действие:", reply_markup=reply_markup)
 
+    elif query.data == "off_on_subscription_search_books":
+        user_id = update.callback_query.from_user.id
+        # Ищем пользователя
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user:####################################################################################################################################
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+            return
+        # Проверка на админа
+
+        if user_id not in ADMINS:
+            await query.answer()  # Отвечаем на запрос, чтобы пользователь не ждал
+            await query.edit_message_text("У вас нет прав для доступа к админ панели.")
+            return
+
+        # Работа с глобальной переменной
+        global subscription_search_book_is_true
+        if subscription_search_book_is_true:
+            subscription_search_book_is_true = False
+            status_text = "❌ Проверка подписки выключена."
+        else:
+            subscription_search_book_is_true = True
+            status_text = "✅ Проверка подписки включена."
+
+        # Кнопки меню
+        menu_buttons = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="search_books_admin")]
+        ]
+        reply_markup = InlineKeyboardMarkup(menu_buttons)
+
+        # Обновление текста с меню
+        await query.edit_message_text(
+            text=status_text,
+            reply_markup=reply_markup
+        )
+    
     elif query.data == "limit_page_book":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
@@ -834,7 +857,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("У вас нет прав для доступа к админ панели.")
             return
         context.user_data['current_mode'] = 'limit_page_book'
-        await query.edit_message_text("Укажите кол-во стрн.")
+        await query.edit_message_text("Укажите макс. кол-во стрн. (без подписки)")
 
     elif query.data == "Limit_books_day_subscribe":
         user_id = update.callback_query.from_user.id
@@ -885,11 +908,14 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("У вас нет прав для доступа к админ панели.")
             return
 
+        # Формирование информации
+        subscription_status = "✅ Включена" if subscription_search_book_is_true else "❌ Выключена"
         info_text = (
             "ℹ️ <b>Информация о режиме \"Поиск книг\"</b>\n\n"
+            f"💬 <b>Проверка подписки:</b> {subscription_status}\n"
             f"💬 <b>Лимит книг в день (без подписки):</b> {count_limit_book_day}\n"
             f"💬 <b>Лимит книг в день (с подпиской):</b> {count_limit_book_in_subscribe_day}\n"
-            f"💬 <b>Лимит страниц (без подписки):</b> {limit_page_book}\n"
+            f"💬 <b>Ограничение на макс. кол-во стрн. (без подписки):</b> {limit_page_book}\n"
         )
 
         # Кнопка назад
@@ -1237,6 +1263,27 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
 
+        # Проверяем подписку пользователя
+        active_subscription = next(
+            (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
+        )
+
+        if subscription_search_book_is_true:
+            # Сообщение об ограничениях для пользователей без подписки
+            if not active_subscription or active_subscription['end_date'] <= datetime.now():
+                await query.edit_message_text(
+                    "🔒 У вас нет активной подписки, поэтому функции поиска книг будут ограничены:\n\n"
+                    f"1️⃣ Максимальное количество страниц: от 5 до {limit_page_book}.\n"
+                    f"2️⃣ Кол-во книг в день ограничено до {count_limit_book_day}\n"
+                    "🌐 Выберите язык книги, чтобы продолжить поиск:",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🇷🇺 Русский", callback_data="language_russian")],
+                        [InlineKeyboardButton("🇬🇧 Английский", callback_data="language_english")],
+                        [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+                    ])
+                )
+                return
+
         # Клавиатура для выбора языка
         keyboard = [
             [InlineKeyboardButton("🇷🇺 Русский", callback_data="language_russian")],
@@ -1398,19 +1445,19 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if context.user_data.get('book_language') == 'russian':
             if all(not option for option in context.user_data['options'].values()):
                 context.user_data['current_mode'] = "search_books"
-                await query.edit_message_text("Какую книгу вы хотите разобрать?\nНапишите название")
+                await query.edit_message_text("✏️ Какую книгу вы хотите разобрать?\nНапишите название")
             else:
                 # Если хоть одна опция выбрана, показываем кнопку "Далее"
                 context.user_data['current_mode'] = "search_books"
-                await query.edit_message_text("Какую книгу вы хотите разобрать?\nНапишите название")
+                await query.edit_message_text("✏️ Какую книгу вы хотите разобрать?\nНапишите название")
         else:
             if all(not option for option in context.user_data['options'].values()):
                 context.user_data['current_mode'] = "search_books"
-                await query.edit_message_text("Which book do you want to review?\nWrite the name")
+                await query.edit_message_text("✏️ Which book do you want to review?\nWrite the name")
             else:
                 # Если хоть одна опция выбрана, показываем кнопку "Далее"
                 context.user_data['current_mode'] = "search_books"
-                await query.edit_message_text("Which book do you want to review?\nWrite the name")
+                await query.edit_message_text("✏️ Which book do you want to review?\nWrite the name")
 
     elif query.data == "select_all_options":
         user_id = update.callback_query.from_user.id
@@ -1495,7 +1542,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             ])
 
             await update.callback_query.message.reply_text(
-                "💬 Задавайте ваши вопросы! Я всегда готов помочь вам. 😊",
+                "💬 Задавайте ваши вопросы! Я всегда готов вам помочь. 😊",
                 reply_markup=reply_markup
             )
             context.user_data['current_mode'] = "chat_with_ai"
@@ -2076,7 +2123,7 @@ async def limit_page_in_book(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         global limit_page_book
         limit_page_book = number
-        await update.message.reply_text(f"Лимит на кол-во книг в день изменён на {limit_page_book}")
+        await update.message.reply_text(f"Ограничение на макс. кол-во стрн. (без подписки) изменёно на {limit_page_book}")
         await handle_menu(update, context)
         context.user_data['current_mode'] = None
     except ValueError:
@@ -2475,19 +2522,32 @@ async def search_books(update, context):
 
     # Проверка лимита на книги за день
     daily_book_count = user.get('daily_book_count', 0)
-    if active_subscription is None or active_subscription['end_date'] <= datetime.now():
-        if daily_book_count >= count_limit_book_day:
-            if context.user_data.get('book_language') == 'russian':
-                await update.message.reply_text(
-                f"❌ Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒\n📝 Либо оформите подписку."
-                )
-            else:
-                await update.message.reply_text(
-                f"❌ The book limit for today has been reached.\nTry tomorrow! 🕒\n📝 Or subscribe."
-                )
+    if subscription_search_book_is_true:
+        if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+            if daily_book_count >= count_limit_book_day:
+                if context.user_data.get('book_language') == 'russian':
+                    await update.message.reply_text(
+                    f"❌ Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒\n📝 Либо оформите подписку."
+                    )
+                else:
+                    await update.message.reply_text(
+                    f"❌ The book limit for today has been reached.\nTry tomorrow! 🕒\n📝 Or subscribe."
+                    )
 
-            await handle_menu(update, context)
-            return
+                await handle_menu(update, context)
+                return
+        else:
+            if daily_book_count >= count_limit_book_in_subscribe_day:
+                if context.user_data.get('book_language') == 'russian':
+                    await update.message.reply_text(
+                    f"❌ Лимит книг на сегодня исчерпан.\nПопробуйте завтра! 🕒"
+                    )
+                else:
+                    await update.message.reply_text(
+                    f"❌ The book limit for today has been reached.\nTry tomorrow! 🕒"
+                    )
+                await handle_menu(update, context)
+                return
     else:
         if daily_book_count >= count_limit_book_in_subscribe_day:
             if context.user_data.get('book_language') == 'russian':
@@ -2512,12 +2572,28 @@ async def search_books(update, context):
                 await update.message.reply_text("✏️ Please indicate the number of pages as a number")
             return
 
-        if num_pages < 5 or num_pages > 50:
-            if context.user_data.get('book_language') == 'russian':
-                await update.message.reply_text("Количество страниц должно быть от 5 до 50")
+        if subscription_search_book_is_true:
+            if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+                if num_pages < 5 or num_pages > limit_page_book:
+                    if context.user_data.get('book_language') == 'russian':
+                        await update.message.reply_text(f"✏️ Количество страниц должно быть от 5 до {limit_page_book}")
+                    else:
+                        await update.message.reply_text(f"✏️ The number of pages should be from 5 to {limit_page_book}")
+                    return
             else:
-                await update.message.reply_text("The number of pages should be from 5 to 50")
-            return
+                if num_pages < 5 or num_pages > 50:
+                    if context.user_data.get('book_language') == 'russian':
+                        await update.message.reply_text("✏️ Количество страниц должно быть от 5 до 50")
+                    else:
+                        await update.message.reply_text("✏️ The number of pages should be from 5 to 50")
+                    return
+        else:
+            if num_pages < 5 or num_pages > 50:
+                if context.user_data.get('book_language') == 'russian':
+                    await update.message.reply_text("✏️ Количество страниц должно быть от 5 до 50")
+                else:
+                    await update.message.reply_text("✏️ The number of pages should be from 5 to 50")
+                return
 
         # Запускаем обработку книги в фоне
         asyncio.create_task(process_book(update, context, num_pages))
@@ -2537,18 +2613,43 @@ async def search_books(update, context):
     if book_exists == "да":
         context.user_data['exact_title'] = exact_title
         context.user_data['list_parts'] = list_parts
-        if active_subscription is None or active_subscription['end_date'] <= datetime.now():
-            # Запускаем обработку книги в фоне
-            asyncio.create_task(process_book(update, context, limit_page_book))
-            if context.user_data.get('book_language') == 'russian':
-                await update.message.reply_text(
-                    f"📚 Книга {exact_title} найдена! 🎉\n📚 Обработка книги началась. Вы можете продолжить пользоваться ботом, пока книга создается!"
-                )
+        if subscription_search_book_is_true:
+            if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+                if context.user_data.get('book_language') == 'russian':
+                    await update.message.reply_text(
+                        f"📚 Книга {exact_title} найдена! 🎉\n"
+                        f"📖 Сколько страниц в этой книге вы хотите? (от 5 до {limit_page_book})",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ Это не та книга", callback_data='menu')
+                        ]])
+                        )
+                else:
+                    await update.message.reply_text(
+                        f"📚 Book {exact_title} found! 🎉\n"
+                        f"📖 How many pages in this book do you want? (from 5 to {limit_page_book})",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ This is the wrong book", callback_data='menu')
+                        ]])
+                    )
+                context.user_data['awaiting_pages'] = True
             else:
-                await update.message.reply_text(
-                    f"📚 Book {exact_title} found! 🎉\n📚 Processing of the book has begun. You can continue to use the bot while the book is being created!"
-                )
-            return
+                if context.user_data.get('book_language') == 'russian':
+                    await update.message.reply_text(
+                        f"📚 Книга {exact_title} найдена! 🎉\n"
+                        f"📖 Сколько страниц в этой книге вы хотите? (от 5 до 50)",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ Это не та книга", callback_data='menu')
+                        ]])
+                        )
+                else:
+                    await update.message.reply_text(
+                        f"📚 Book {exact_title} found! 🎉\n"
+                        f"📖 How many pages in this book do you want? (from 5 to 50)",
+                        reply_markup=InlineKeyboardMarkup([[
+                            InlineKeyboardButton("❌ This is the wrong book", callback_data='menu')
+                        ]])
+                    )
+                context.user_data['awaiting_pages'] = True
         else:
             if context.user_data.get('book_language') == 'russian':
                 await update.message.reply_text(
@@ -2557,7 +2658,7 @@ async def search_books(update, context):
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("❌ Это не та книга", callback_data='menu')
                     ]])
-                )
+                    )
             else:
                 await update.message.reply_text(
                     f"📚 Book {exact_title} found! 🎉\n"
@@ -2567,7 +2668,22 @@ async def search_books(update, context):
                     ]])
                 )
             context.user_data['awaiting_pages'] = True
-    else:
+    elif book_exists == 'не 7':
+        if context.user_data.get('book_language') == 'russian':
+            await update.message.reply_text(
+                f"❌ Произошла ошибка. Попробуйте заново",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
+                ]])
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ An error has occurred. Try again",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Back to menu", callback_data='menu')
+                ]])
+            )
+    elif book_exists == 'нет':
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text(
                 f"❌ Книга '{book_title}' не найдена. Попробуйте другое название",
@@ -2604,7 +2720,9 @@ async def get_chatgpt_response(update: Update, message):
         # Проверка на отсутствие книги
         if any(phrase in answer.lower() for phrase in ["нет", "не существует", "не найдена"]):
             book_exists = "нет"
-            return book_exists
+            exact_title = None
+            list_parts = None
+            return exact_title, book_exists, list_parts
         else:
             book_exists = "да"
             found_title_match = re.search(r'"([^"]+)"', answer)
