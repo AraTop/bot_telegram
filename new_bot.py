@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 import os
 from yookassa import Configuration, Payment
 import uuid
-from PyPDF2 import PdfWriter
 
 load_dotenv()
 
@@ -147,16 +146,18 @@ async def generate_options_menu(options, context):
 
     action_texts = {
         "russian": {
-            "next": "Далее",
+            "next": "➡️ Далее",
             "skip": "⏩ Пропустить",
             "select_all": "✅ Выбрать все",
-            "remove_all": "❌ Убрать все"
+            "remove_all": "❌ Убрать все",
+            "search_books": "🔙 Назад"
         },
         "english": {
-            "next": "Next",
+            "next": "➡️ Next",
             "skip": "⏩ Skip",
             "select_all": "✅ Select All",
-            "remove_all": "❌ Remove All"
+            "remove_all": "❌ Remove All",
+            "search_books": "🔙Back"
         }
     }
     
@@ -170,31 +171,39 @@ async def generate_options_menu(options, context):
     remove_all_button = action_labels["remove_all"] if all(options.values()) else None
     select_all_button = action_labels["select_all"] if not all(options.values()) else None
 
-    # Формируем кнопки для выбора опций
     buttons = [
         [
             InlineKeyboardButton(
                 f"{option_labels[0]} {'✅' if options['option_1'] else '❌'}",
                 callback_data="toggle_option_option_1"
-            ),
+            )
+        ],
+        [
             InlineKeyboardButton(
                 f"{option_labels[1]} {'✅' if options['option_2'] else '❌'}",
                 callback_data="toggle_option_option_2"
-            ),
+            )
         ],
         [
             InlineKeyboardButton(
                 f"{option_labels[2]} {'✅' if options['option_3'] else '❌'}",
                 callback_data="toggle_option_option_3"
-            ),
+            )
+        ],
+        [
             InlineKeyboardButton(
                 f"{option_labels[3]} {'✅' if options['option_4'] else '❌'}",
                 callback_data="toggle_option_option_4"
-            ),
+            )
         ],
         [
-            InlineKeyboardButton(action_button_text, callback_data="skip_options"),
+            InlineKeyboardButton(action_button_text, callback_data="skip_options")
+        ],
+        [
             InlineKeyboardButton(remove_all_button if remove_all_button else select_all_button, callback_data="select_all_options" if not remove_all_button else "remove_all_options")
+        ],
+        [
+            InlineKeyboardButton(action_labels["search_books"], callback_data="search_books")
         ]
     ]
 
@@ -739,11 +748,10 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         instructions = (
             "✏️ Напишите текст уведомления, который будет отправлен вашим пользователям.\n\n"
             "Вы можете добавить кнопки в уведомление. Для этого используйте следующий формат:\n"
-            "`Текст кнопки|Ссылка или /команда`\n\n"
+            "`Текст кнопки|Ссылка`\n\n"
             "Пример:\n"
             "🎉 Новое обновление! 🎉\n"
-            "Подробнее|https://example.com\n"
-            "Меню|/menu\n\n"
+            "Подробнее|https://example.com\n\n"
             "🌟 Для того, чтобы ваше уведомление было красивым и привлекательным, не забудьте добавить смайлики! 🌈😊\n"
             "Они помогут сделать ваше сообщение более ярким и выразительным. Например, используйте смайлики для подчеркивания важной информации или для создания нужной атмосферы.\n\n"
             "Если хотите добавить дополнительные кнопки, укажите их по аналогии с примером выше.\n\n"
@@ -1344,13 +1352,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if context.user_data.get('book_language') == 'russian':
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Теперь выберите опции:",
+                "✏️ Теперь выберите опции:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Now select options:",
+                "✏️ Now select options:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
 
@@ -1370,13 +1378,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if context.user_data.get('book_language') == 'russian':
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Теперь выберите опции:",
+                "✏️ Теперь выберите опции:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Now select options:",
+                "✏️ Now select options:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
 
@@ -1396,13 +1404,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if context.user_data.get('book_language') == 'russian':
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Теперь выберите опции:",
+                "✏️ Теперь выберите опции:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Now select options:",
+                "✏️ Now select options:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
     
@@ -1422,13 +1430,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if context.user_data.get('book_language') == 'russian':
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Теперь выберите опции:",
+                "✏️ Теперь выберите опции:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             # Обновляем сообщение с кнопками
             await query.edit_message_text(
-                "Now select options:",
+                "✏️ Now select options:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
 
@@ -1471,12 +1479,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['options'] = {key: True for key in context.user_data['options']}
         if context.user_data.get('book_language') == 'russian':
             await query.edit_message_text(
-                "Все опции выбраны. Вы можете убрать все:",
+                "✅ Все опции выбраны. Вы можете убрать все:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             await query.edit_message_text(
-                "All options are selected. You can remove everything:",
+                "✅ All options are selected. You can remove everything:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
 
@@ -1492,12 +1500,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['options'] = {key: False for key in context.user_data['options']}
         if context.user_data.get('book_language') == 'russian':
             await query.edit_message_text(
-                "Все опции убраны. Выберите снова:",
+                "✅ Все опции убраны. Выберите снова:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
         else:
             await query.edit_message_text(
-                "All options have been removed. Select again:",
+                "✅ All options have been removed. Select again:",
                 reply_markup=await generate_options_menu(context.user_data['options'], context)
             )
 
@@ -1994,12 +2002,12 @@ async def process_notification(update: Update, context: ContextTypes.DEFAULT_TYP
                 try:
                     button_text, button_link = line.split("|", 1)
                     # Проверка правильности ссылки (должна быть либо внешняя ссылка, либо команда бота)
-                    if not (button_link.startswith("http") or button_link.startswith("/")):
-                        await update.message.reply_text(f"⚠️ Неправильная ссылка или команда в строке:\n{line}\nУбедитесь, что ссылка начинается с 'http' или команда с '/'")
+                    if not (button_link.startswith("http")):
+                        await update.message.reply_text(f"⚠️ Неправильная ссылка или команда в строке:\n{line}\nУбедитесь, что ссылка начинается с 'http'")
                         return
                     buttons.append([InlineKeyboardButton(button_text.strip(), url=button_link.strip() if button_link.startswith("http") else None, callback_data=button_link.strip() if not button_link.startswith("http") else None)])
                 except ValueError:
-                    await update.message.reply_text(f"⚠️ Ошибка в формате кнопки: {line}\nПроверьте, что формат правильный (Текст|Ссылка или команда /).")
+                    await update.message.reply_text(f"⚠️ Ошибка в формате кнопки: {line}\nПроверьте, что формат правильный (Текст|Ссылка).")
                     return
             else:
                 text_lines.append(line)
@@ -2065,11 +2073,10 @@ async def process_single_user_notification(update: Update, context: ContextTypes
     instructions = (
         "✏️ Напишите текст уведомления, который будет отправлен вашим пользователям.\n\n"
         "Вы можете добавить кнопки в уведомление. Для этого используйте следующий формат:\n"
-        "`Текст кнопки|Ссылка или /команда`\n\n"
+        "`Текст кнопки|Ссылка`\n\n"
         "Пример:\n"
         "🎉 Новое обновление! 🎉\n"
-        "Подробнее|https://example.com\n"
-        "Меню|/menu\n\n"
+        "Подробнее|https://example.com\n\n"
         "🌟 Для того, чтобы ваше уведомление было красивым и привлекательным, не забудьте добавить смайлики! 🌈😊\n"
         "Они помогут сделать ваше сообщение более ярким и выразительным. Например, используйте смайлики для подчеркивания важной информации или для создания нужной атмосферы.\n\n"
         "Если хотите добавить дополнительные кнопки, укажите их по аналогии с примером выше.\n\n"
@@ -2165,12 +2172,12 @@ async def process_single_notification(update: Update, context: ContextTypes.DEFA
                 try:
                     button_text, button_link = line.split("|", 1)
                     # Проверка правильности ссылки (должна быть либо внешняя ссылка, либо команда бота)
-                    if not (button_link.startswith("http") or button_link.startswith("/")):
-                        await update.message.reply_text(f"⚠️ Неправильная ссылка или команда в строке:\n{line}\nУбедитесь, что ссылка начинается с 'http' или команда с '/'")
+                    if not (button_link.startswith("http")):
+                        await update.message.reply_text(f"⚠️ Неправильная ссылка:\n{line}\nУбедитесь, что ссылка начинается с 'http'")
                         return
                     buttons.append([InlineKeyboardButton(button_text.strip(), url=button_link.strip() if button_link.startswith("http") else None, callback_data=button_link.strip() if not button_link.startswith("http") else None)])
                 except ValueError:
-                    await update.message.reply_text(f"⚠️ Ошибка в формате кнопки: {line}\nПроверьте, что формат правильный (Текст|Ссылка или команда /).")
+                    await update.message.reply_text(f"⚠️ Ошибка в формате кнопки: {line}\nПроверьте, что формат правильный (Текст|Ссылка).")
                     return
             else:
                 text_lines.append(line)
@@ -2417,12 +2424,32 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
     user['is_process_book'] = True
     list_parts = context.user_data.get('list_parts')
     exact_title = context.user_data.get('exact_title')
-
+    
     total_words = num_pages * 140  # общее количество слов
-
-    # Количество слов на одну часть
+    total_words_in_dop = 0
+    # Получаем список ключей, где значение True
+    selected_options_keys = [key for key, value in context.user_data.get('options', {}).items() if value]
+    full_total_words = total_words
+    if selected_options_keys:
+        for option in selected_options_keys:
+            if option == 'option_1':
+                procent = 0.10
+                total_words_in_dop += total_words * procent
+            elif option == 'option_2':
+                procent = 0.05
+                total_words_in_dop += total_words * procent
+            elif option == 'option_3':
+                procent = 0.05
+                total_words_in_dop += total_words * procent
+            elif option == 'option_4':
+                procent = 0.10
+                total_words_in_dop += total_words * procent
+        total_words = total_words - total_words_in_dop
+    
     words_per_part = total_words / 7
     subparts_per_part_float = words_per_part / 100
+    if subparts_per_part_float < 1:
+        subparts_per_part_float = 1.0
     subparts_per_part_base = math.floor(subparts_per_part_float)
     fractional_part = round((subparts_per_part_float - subparts_per_part_base) * 10)
 
@@ -2435,9 +2462,9 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
     last_text_in_pdf = []
     
     if context.user_data.get('book_language') == 'russian':
-        progress_message = await update.message.reply_text("Начинаем обработку...")
+        progress_message = await update.message.reply_text("⏳ Начинаем обработку...")
     else:
-        progress_message = await update.message.reply_text("Let's start processing...")
+        progress_message = await update.message.reply_text("⏳ Let's start processing...")
 
     for index, part_number in enumerate(list_parts, start=1):
         for subpart_index in range(1, subparts[index - 1] + 1):
@@ -2467,12 +2494,254 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
             if progress_message:
                 if context.user_data.get('book_language') == 'russian':
                     await progress_message.edit_text(
-                        f"Обрабатываем часть {index}/7, подчасть {subpart_index}/{subparts[index - 1]}"
+                        f"⏳ Обрабатываем часть {index}/7, подчасть {subpart_index}/{subparts[index - 1]}"
                     )
                 else:
                     await progress_message.edit_text(
-                        f"Processing part {index}/7, subpart {subpart_index}/{subparts[index - 1]}"
+                        f"⏳ Processing part {index}/7, subpart {subpart_index}/{subparts[index - 1]}"
                     )
+
+    # Получаем список ключей, где значение True
+    selected_options_keys = [key for key, value in context.user_data.get('options', {}).items() if value]
+    if selected_options_keys:
+        apend_ture = False
+        for option in selected_options_keys:
+            if option == 'option_3':
+                pass
+            else:
+                if apend_ture: 
+                    pass
+                else:
+                    apend_ture = True
+                    last_text_in_pdf.append('--------------------------------------------------------------------------------------------')
+        count_pages = 0
+        count = 0
+
+        if context.user_data.get('book_language') == 'russian':
+            progress_message = await update.message.reply_text("⏳ Начинаем обработку...")
+        else:
+            progress_message = await update.message.reply_text("⏳ Let's start processing...")
+        # Итерируемся по ним
+        for option in selected_options_keys:
+            count += 1
+
+            if progress_message:
+                if context.user_data.get('book_language') == 'russian':
+                    await progress_message.edit_text(
+                        f"⏳ Обрабатываем часть {count}/{len(selected_options_keys)}"
+                    )
+                else:
+                    await progress_message.edit_text(
+                        f"⏳ Processing part {count}/{len(selected_options_keys)}"
+                    )
+            if option == 'option_1':
+                procent = 0.1
+                remainder = full_total_words * procent
+                if remainder <= 140:
+                    if context.user_data.get('book_language') == 'russian':
+                        prompt = (
+                            f"Напиши мне подробный анализ этой книги {exact_title} и разбор ключевых идей"
+                            f"В этом подробном анализе и разборе ключевых идей должно быть {remainder + 50} слов."
+                        )
+                    else:
+                        prompt = (
+                            f"Write me a detailed analysis of this book {exact_title} and an analysis of key ideas"
+                            f"This detailed analysis and analysis of key ideas should contain {remainder + 50} words."
+                        )
+
+                    response = await openai.ChatCompletion.acreate(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500
+                    )
+
+                    chat_gpt_reply = response['choices'][0]['message']['content']
+                    last_text_in_pdf.append(chat_gpt_reply)
+                else:
+                    count_pages = int(remainder // 140)
+                    for page in range(1, count_pages + 1):
+                        if context.user_data.get('book_language') == 'russian':
+                            prompt = (
+                                f"Напиши мне подробный анализ этой книги {exact_title} и разбор ключевых идей"
+                                f"Мы сейчас рассматриваем часть {page}/{count_pages}."
+                                f"В этом подробном анализе и разборе ключевых идей должно быть 190 слов."
+                            )
+                        else:
+                            prompt = (
+                                f"Write me a detailed analysis of this book {exact_title} and an analysis of key ideas"
+                                f"We are now looking at the {page}/{count_pages} part."
+                                f"This detailed analysis and analysis of key ideas should contain 190 words."
+                            )
+                        response = await openai.ChatCompletion.acreate(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500
+                        )
+
+                        chat_gpt_reply = response['choices'][0]['message']['content']
+                        last_text_in_pdf.append(chat_gpt_reply)
+
+            elif option == 'option_2':
+                procent = 0.05
+                remainder = full_total_words * procent
+                if remainder <= 140:
+                    if context.user_data.get('book_language') == 'russian':
+                        prompt = (
+                            f"напиши мне обширный подбор цитат из книги {exact_title}"
+                            f"В этом обширном подборе цитат из книги должно быть {remainder + 50} слов."
+                        )
+                    else:
+                        prompt = (
+                            f"write me an extensive selection of quotes from the book {exact_title}"
+                            f"This extensive selection of book quotes should contain {remainder + 50} words."
+                        )
+                    response = await openai.ChatCompletion.acreate(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500
+                        )
+                    chat_gpt_reply = response['choices'][0]['message']['content']
+                    last_text_in_pdf.append(chat_gpt_reply)
+                else:
+                    count_pages = int(remainder // 140)
+                    for page in range(1, count_pages + 1):
+                        if context.user_data.get('book_language') == 'russian':
+                            prompt = (
+                                f"напиши мне обширный подбор цитат из книги {exact_title}"
+                                f"Мы сейчас рассматриваем часть {page}/{count_pages}."
+                                f"В этом подробном анализе и разборе ключевых идей должно быть 190 слов."
+                            )
+                        else:
+                            prompt = (
+                                f"write me an extensive selection of quotes from the book {exact_title}"
+                                f"We are now looking at the {page}/{count_pages} part."
+                                f"This detailed analysis and analysis of key ideas should contain 190 words."
+                            )
+                        response = await openai.ChatCompletion.acreate(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500
+                            )
+                        chat_gpt_reply = response['choices'][0]['message']['content']
+                        last_text_in_pdf.append(chat_gpt_reply)
+
+            elif option == 'option_3':
+                procent = 0.05
+                remainder = full_total_words * procent
+                if remainder <= 140:
+                    if context.user_data.get('book_language') == 'russian':
+                        prompt = (
+                            f"напиши мне небольшую биографию автора из книги {exact_title}"
+                            f"В этой небольшой биографии автора должно быть {remainder + 50} слов."
+                        )
+                    else:
+                        prompt = (
+                            f"write me a short biography of the author from the book {exact_title}"
+                            f"This short author bio should be {remainder + 50} words."
+                        )
+
+                    response = await openai.ChatCompletion.acreate(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500
+                    )
+
+                    chat_gpt_reply = response['choices'][0]['message']['content']
+                    last_text_in_pdf.insert(0, chat_gpt_reply)
+                else:
+                    count_pages = int(remainder // 140)
+                    first_iteration_done = False
+                    first_iteration_done_count = 0
+                    for page in range(1, count_pages + 1):
+                        if context.user_data.get('book_language') == 'russian':
+                            prompt = (
+                                f"напиши мне небольшую биографию автора из книги {exact_title}"
+                                f"Мы сейчас рассматриваем часть {page}/{count_pages}."
+                                f"В этой небольшой биографии автора должно быть 190 слов."
+                            )
+                        else:
+                            prompt = (
+                                f"write me a short biography of the author from the book {exact_title}"
+                                f"We are now looking at the {page}/{count_pages} part."
+                                f"This short author bio should be 190 words."
+                            )
+                        response = await openai.ChatCompletion.acreate(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500
+                        )
+
+                        chat_gpt_reply = response['choices'][0]['message']['content']
+
+                        if not first_iteration_done:
+                            # Если это первая итерация, добавляем в начало
+                            last_text_in_pdf.insert(0, chat_gpt_reply)
+                            first_iteration_done = True
+                            first_iteration_done_count = 1
+                        elif first_iteration_done_count == 1:
+                            # Вторая итерация, добавляем под первой записью
+                            last_text_in_pdf.insert(1, chat_gpt_reply)
+                            first_iteration_done_count = 2
+                        elif first_iteration_done_count == 2:
+                            # Третья итерация, добавляем на третью позицию
+                            last_text_in_pdf.insert(2, chat_gpt_reply)
+                            first_iteration_done_count = 3
+                        elif first_iteration_done_count == 3:
+                            # Четвертая итерация, добавляем на четвертую позицию
+                            last_text_in_pdf.insert(3, chat_gpt_reply)
+                            first_iteration_done_count = 4
+                        elif first_iteration_done_count == 4:
+                            # Пятая итерация, добавляем на пятую позицию
+                            last_text_in_pdf.insert(4, chat_gpt_reply)
+                            first_iteration_done_count = 5
+                        elif first_iteration_done_count == 5:
+                            # Если больше 5 итераций, добавляем в конец
+                            last_text_in_pdf.insert(5, chat_gpt_reply)
+
+            elif option == 'option_4':
+                procent = 0.1
+                remainder = full_total_words * procent
+                if remainder <= 140:
+                    if context.user_data.get('book_language') == 'russian':
+                        prompt = (
+                            f"напиши о критике данной книги {exact_title}"
+                            f"В этой критике должно быть {remainder + 50} слов."
+                        )
+                    else:
+                        prompt = (
+                            f"write about criticism of this book {exact_title}"
+                            f"This critique should be {remainder + 50} words."
+                        )
+                    response = await openai.ChatCompletion.acreate(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500
+                        )
+                    chat_gpt_reply = response['choices'][0]['message']['content']
+                    last_text_in_pdf.append(chat_gpt_reply)
+
+                else:
+                    count_pages = int(remainder // 140)
+                    for page in range(1, count_pages + 1):
+                        if context.user_data.get('book_language') == 'russian':
+                            prompt = (
+                                f"напиши о критике данной книги {exact_title}"
+                                f"Мы сейчас рассматриваем часть {page}/{count_pages}."
+                                f"В этой критике должно быть 190 слов."
+                            )
+                        else:
+                            prompt = (
+                                f"write about criticism of this book {exact_title}"
+                                f"We are now looking at the {page}/{count_pages} part."
+                                f"This critique should be 190 words."
+                            )
+                        response = await openai.ChatCompletion.acreate(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500
+                            )
+                        chat_gpt_reply = response['choices'][0]['message']['content']
+                        last_text_in_pdf.append(chat_gpt_reply)
 
     full_text = "\n\n".join(last_text_in_pdf)
     user['daily_book_count'] += 1
