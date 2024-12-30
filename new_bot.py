@@ -38,6 +38,8 @@ count_limit_book_in_subscribe_day = 10
 limit_page_book = 20
 count_limit_book_day = 1
 wait_hour = 1
+count_search_book = 0
+count_chat_ai = 0
 
 # Хранилище подписок (для админов)
 subscriptions = []
@@ -608,11 +610,130 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("👥 Управление пользователями", callback_data="users_admin")],
             [InlineKeyboardButton("💳 Управление подписками", callback_data="manage_subscriptions")],
             [InlineKeyboardButton("🔔 Уведомления", callback_data="notifications")],
+            [InlineKeyboardButton("📈 Cтатистика ", callback_data="statistic")],
             [InlineKeyboardButton("⚙️ Режимы", callback_data="modes_admin")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
         ]
         reply_markup = InlineKeyboardMarkup(admin_keyboard)
         await query.edit_message_text("Админ панель", reply_markup=reply_markup)
+
+    elif query.data == "statistic":
+        user_id = update.callback_query.from_user.id
+        context.user_data['current_mode'] = None
+        # Ищем пользователя
+        user = next((u for u in users if u['user_id'] == user_id), None)
+
+        if not user:
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
+            return
+
+        # Проверка на админа
+        if user_id not in ADMINS:
+            await query.edit_message_text("У вас нет прав для доступа к админ панели")
+            return
+
+        # Клавиатура для управления пользователями
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("👥 Пользователей всего", callback_data="all_users")],
+            [InlineKeyboardButton("🔑 Пользователи с подписками", callback_data="subscribed_users")],
+            [InlineKeyboardButton("🚫 Пользователи без подписками", callback_data="unsubscribed_users")],
+            [InlineKeyboardButton("🤖 Сколько раз использовали: Чат с ИИ", callback_data="static_chat_ai")],
+            [InlineKeyboardButton("📚 Сколько раз использовали: Поиск книг", callback_data="static_search_book")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]
+        ]
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        await query.edit_message_text("Выберите действие", reply_markup=reply_markup)
+
+    elif query.data == "static_search_book":
+        # Получаем количество раз, когда использовался поиск книг
+       
+        # Формируем сообщение с количеством использований поиска книг
+        text = f"📚 Поиск книг использовался {count_search_book} раз(а)."
+
+        # Клавиатура с кнопкой "Назад"
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="statistic")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        
+        # Отправляем сообщение
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif query.data == "static_chat_ai":
+        # Получаем количество раз, когда использовался чат с ИИ
+        
+        # Формируем сообщение с количеством использований чата с ИИ
+        text = f"🤖 Чат с ИИ использовался {count_chat_ai} раз(а)."
+
+        # Клавиатура с кнопкой "Назад"
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="statistic")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        
+        # Отправляем сообщение
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif query.data == "all_users":
+        # Получаем общее количество пользователей
+        total_users = len(users)
+
+        # Формируем сообщение и клавиатуру с кнопками
+        text = f"👥 Всего пользователей в боте: {total_users}"
+        
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="statistic")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        
+        # Отправляем сообщение с количеством пользователей и клавиатурой
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif query.data == "subscribed_users":
+        # Получаем список пользователей с подписками
+        subscribed_users = [user for user in user_subscriptions if user.get("subscription_name")]
+        
+        # Получаем общее количество пользователей с подписками
+        total_subscribed_users = len(subscribed_users)
+
+        # Формируем сообщение и клавиатуру с кнопками
+        text = f"🔑 Пользователи с подписками: {total_subscribed_users}"
+        
+        # Клавиатура с кнопкой "Назад"
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="statistic")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        
+        # Отправляем сообщение с количеством пользователей и клавиатурой
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+    elif query.data == "unsubscribed_users":
+        # Получаем список пользователей с подписками
+        subscribed_users = [user['user_id'] for user in user_subscriptions]  # Список пользователей с подписками
+        
+        # Находим пользователей без подписки (вычитаем из списка всех пользователей тех, кто есть в user_subscriptions)
+        unsubscribed_users = [user for user in users if user['user_id'] not in subscribed_users]
+
+        # Получаем общее количество пользователей без подписок
+        total_unsubscribed_users = len(unsubscribed_users)
+
+        # Формируем сообщение и клавиатуру с кнопками
+        text = f"🚫 Пользователи без подписок: {total_unsubscribed_users}"
+
+        # Клавиатура с кнопкой "Назад"
+        admin_user_management_keyboard = [
+            [InlineKeyboardButton("🔙 Назад", callback_data="statistic")]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(admin_user_management_keyboard)
+        
+        # Отправляем сообщение с количеством пользователей и клавиатурой
+        await query.edit_message_text(text, reply_markup=reply_markup)
 
     elif query.data == "users_admin":
         user_id = update.callback_query.from_user.id
@@ -2341,7 +2462,8 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Ответ ИИ
     ai_reply = response['choices'][0]['message']['content']
-
+    global count_chat_ai
+    count_chat_ai += 1
     # Добавляем ответ ИИ в историю
     context.user_data['chat_context'].append({"role": "assistant", "content": ai_reply})
     
@@ -2865,6 +2987,8 @@ async def search_books(update, context):
                 return
 
         # Запускаем обработку книги в фоне
+        global count_search_book
+        count_search_book += 1
         asyncio.create_task(process_book(update, context, num_pages))
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text(
