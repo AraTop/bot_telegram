@@ -1,3 +1,4 @@
+import json
 import math
 import openai
 import re
@@ -39,7 +40,7 @@ users = []
 count_words_user = []
 
 # переменые для управление из админ панели
-ADMINS = [5706003073, 2125819462]
+ADMINS = list(map(int, os.getenv("ADMINS", "").split(',')))
 subscription_chat_with_ai_is_true = True
 subscription_search_book_is_true = True
 count_limit_chat_with_ai = 10
@@ -56,6 +57,144 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 # Установите API-ключ OpenAI
 openai.api_key = openai_api_key
 
+async def update_reset_time(user_id, reset_time):
+    conn = await connect_db()
+    await conn.execute("""
+        UPDATE users
+        SET reset_time = $1
+        WHERE user_id = $2
+    """, reset_time, user_id)
+    await close_db(conn)
+
+async def update_count_words(user_id, new_count):
+    """
+    Обновляет count_words для пользователя до указанного значения.
+    """
+    conn = await connect_db()
+    await conn.execute("""
+        UPDATE users
+        SET count_words = $1
+        WHERE user_id = $2
+    """, new_count, user_id)
+    await close_db(conn)
+
+async def increment_count_words(user_id):
+    """
+    Увеличивает count_words на 1 для пользователя.
+    """
+    conn = await connect_db()
+    await conn.execute("""
+        UPDATE users
+        SET count_words = count_words + 1
+        WHERE user_id = $1
+    """, user_id)
+    await close_db(conn)
+
+async def update_user_library_dict(user_id: int, library_json: str):
+    conn = await connect_db()
+    await conn.execute(
+        "UPDATE users SET library = $1 WHERE user_id = $2", 
+        library_json,  # Передаем сериализованный JSON
+        user_id
+    )
+    await close_db(conn)
+
+# Обновление is_process_book пользователя в базе данных
+async def update_user_process_book(user_id, is_processing):
+    conn = await connect_db()
+    # Выполняем обновление в таблице users
+    await conn.execute("""
+        UPDATE users
+        SET is_process_book = $1
+        WHERE user_id = $2
+    """, is_processing, user_id)
+    await close_db(conn)
+
+async def update_user_library(user_id: int):
+    conn = await connect_db()
+    await conn.execute(
+        "UPDATE users SET library = $1 WHERE user_id = $2", 
+        [],  # Пустой список (можно использовать JSON формат или другое представление)
+        user_id
+    )
+    await close_db(conn)
+
+async def update_user_daily_book_count(user_id, new_count):
+    conn = await connect_db()
+    # Выполняем обновление в таблице users
+    await conn.execute("""
+        UPDATE users
+        SET daily_book_count = $1
+        WHERE user_id = $2
+    """, new_count, user_id)
+    await close_db(conn)
+
+# Создаем асинхронное подключение
+async def connect_db():
+    conn = await asyncpg.connect(**DB_CONFIG)
+    return conn
+
+# Обновление данных пользователя
+async def update_user_last_book_date(user_id, today_date):
+    conn = await connect_db()
+    # Выполняем обновление в таблице users
+    await conn.execute("""
+        UPDATE users
+        SET last_book_date = $1
+        WHERE user_id = $2
+    """, today_date, user_id)
+    await close_db(conn)
+
+# Закрытие соединения с базой данных
+async def close_db(conn):
+    await conn.close()
+
+# Добавление нового пользователя в базу данных
+async def add_user(user_id, username):
+    conn = await connect_db()
+    await conn.execute("""
+        INSERT INTO users (user_id, username, daily_book_count, last_book_date, is_process_book, count_words, reset_time)
+        VALUES ($1, $2, 0, NULL, FALSE, 0, NULL)
+        ON CONFLICT (user_id) DO NOTHING
+    """, user_id, username)
+    await close_db(conn)
+
+async def update_user_daily_book_count(user_id, new_count):
+    conn = await connect_db()
+    # Выполняем обновление в таблице users
+    await conn.execute("""
+        UPDATE users
+        SET daily_book_count = $1
+        WHERE user_id = $2
+    """, new_count, user_id)
+    await close_db(conn)
+
+# Проверка существования пользователя в базе данных
+async def user_exists(user_id):
+    conn = await connect_db()
+    row = await conn.fetchrow("""
+        SELECT 1 FROM users WHERE user_id = $1
+    """, user_id)
+    await close_db(conn)
+    return row is not None
+
+# Функция для получения пользователя из базы данных
+async def get_user(user_id):
+    conn = await connect_db()
+    user = await conn.fetchrow("""
+        SELECT * FROM users WHERE user_id = $1
+    """, user_id)
+    await close_db(conn)
+    return user
+
+async def get_user_for_username(username):
+    conn = await connect_db()
+    user = await conn.fetchrow("""
+        SELECT * FROM users WHERE username = $1
+    """, username)
+    await close_db(conn)
+    return user
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['chat_context'] = []
@@ -68,9 +207,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username
 
+    # Проверяем, существует ли пользователь в базе данных
+    if not await user_exists(user_id):
+        # Если пользователя нет в базе данных, добавляем его
+        print(f'создаем нового пользователя в базе даных {user_id}')
+        await add_user(user_id, username)
+
     # Добавление нового пользователя в список пользователей
-    if not any(user['user_id'] == user_id for user in users):
-        users.append({'user_id': user_id, 'username': username, 'daily_book_count': 0, 'last_book_date': None, 'is_process_book': False, 'count_words': 0, 'reset_time': None})
+    #if not any(user['user_id'] == user_id for user in users):
+    #    users.append({'user_id': user_id, 'username': username, 'daily_book_count': 0, 'last_book_date': None, 'is_process_book': False, 'count_words': 0, 'reset_time': None})
 
     # Создаем меню
     await handle_menu(update, context)
@@ -84,22 +229,28 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['awaiting_pages'] = False
     query = update.callback_query if update.callback_query else None
 
+    user_id = query.from_user.id if query else update.message.from_user.id
+
+    # Получаем пользователя из базы данных
+    user = await get_user(user_id)
+    print(user)
+    if user is None:
+        await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
+        return
+
+    # Формируем текст приветствия
+    greeting_message = f"🌟 Здравствуйте, {user['username']}! 👋\n\nМы рады видеть вас в нашем боте! 😊\nВыберите одну из опций ниже:👇"
+
     # Создаем кнопки для меню
     keyboard = [
         [InlineKeyboardButton("📚 Поиск книг", callback_data="search_books"),
          InlineKeyboardButton("🤖 Чат с ИИ", callback_data="chat_with_ai")],
         [InlineKeyboardButton("💳 Подписки", callback_data="subscriptions_menu"),
          InlineKeyboardButton("🎮 Игры", callback_data="game")],
-        [InlineKeyboardButton("📚 Моя библеотека", callback_data="my_library")],
+        [InlineKeyboardButton("📚 Моя библиотека", callback_data="my_library")],
     ]
 
     # Добавляем кнопку "Админ панель" для администраторов
-    user_id = query.from_user.id if query else update.message.from_user.id
-    for user in users:
-        if user['user_id'] == user_id: 
-            # Формируем текст приветствия
-            greeting_message = f"🌟 Здравствуйте, {user['username']}! 👋\n\nМы рады видеть вас в нашем боте! 😊\nВыберите одну из опций ниже:👇"
-
     if user_id in ADMINS:
         keyboard.append([InlineKeyboardButton("🔒 Админ панель", callback_data="admin_panel")])
 
@@ -107,10 +258,10 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Если вызвано из кнопки (callback), редактируем сообщение
     if query:
-        await query.edit_message_text(greeting_message , reply_markup=reply_markup)
+        await query.edit_message_text(greeting_message, reply_markup=reply_markup)
     else:
         # Иначе создаём новое сообщение
-        await update.message.reply_text(greeting_message , reply_markup=reply_markup)
+        await update.message.reply_text(greeting_message, reply_markup=reply_markup)
 
 # Функция для асинхронной проверки статуса платежа
 async def check_payment_status(payment_id, user_id, subscription_name, subscription_price, query):
@@ -258,8 +409,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("book_options_"):
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
-        user = next((u for u in users if u['user_id'] == user_id), None)
-
+        user = await get_user(user_id)
+        print(user)
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или удалена")
             return
@@ -281,7 +432,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("delete_book_"):
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или уже удалена")
@@ -327,7 +479,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("send_book_"):
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или удалена")
@@ -353,7 +506,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "menu":
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -364,7 +517,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "subscriptions_menu":
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -410,7 +564,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         # Ищем активную подписку пользователя
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -450,7 +605,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "subscriptions":
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -476,7 +632,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("view_"):
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -519,7 +676,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("buy_"):
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -603,7 +761,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "admin_panel":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -630,7 +789,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         context.user_data['current_mode'] = None
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -748,7 +908,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         context.user_data['current_mode'] = None
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -770,7 +931,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "search_user":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -799,7 +961,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         context.user_data['current_mode'] = None
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -823,7 +986,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "notify_single_user":
         user_id = update.callback_query.from_user.id
 
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -851,7 +1015,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("notify_"):
         user_id = update.callback_query.from_user.id
         
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -898,7 +1063,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "modes_admin":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -921,7 +1087,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "search_books_admin":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -947,7 +1114,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "off_on_subscription_search_books":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -983,7 +1151,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "limit_page_book":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1000,7 +1169,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "Limit_books_day_subscribe":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1017,7 +1187,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "Limit_books_day":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1035,7 +1206,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         # Проверка на админа
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1070,7 +1242,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "chat_with_ai_admin":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1094,7 +1267,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "off_on_subscription_verification_chat_with":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1130,7 +1304,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "Info_chat_with_ai":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1165,7 +1340,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "edit_count_in_chat_with_ai":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1182,7 +1358,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "edit_hour_in_chat_with_ai":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1199,7 +1376,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "manage_subscriptions":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1223,7 +1401,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "gift_subscription":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1255,7 +1434,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("gift_"):
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1275,7 +1455,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "add_subscription":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1294,7 +1475,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "remove_subscription":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1330,7 +1512,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data.startswith("delete_"):
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1374,7 +1557,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "game":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1395,7 +1579,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "search_books":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1438,7 +1623,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data in ["language_russian", "language_english"]:
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1469,7 +1655,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "toggle_option_option_1":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1495,7 +1682,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "toggle_option_option_2":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1521,7 +1709,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "toggle_option_option_3":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1547,7 +1736,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "toggle_option_option_4":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1573,7 +1763,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "skip_options":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1600,7 +1791,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "select_all_options":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1621,7 +1813,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "remove_all_options":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1642,7 +1835,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "chat_with_ai":
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
+        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1688,7 +1882,8 @@ async def add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1739,7 +1934,8 @@ async def add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gift_subscription(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1760,8 +1956,8 @@ async def gift_subscription(update, context):
         recipient_id = int(entered_id)
 
         # Проверяем, существует ли пользователь с таким ID в списке users
-        recipient = next((user for user in users if user['user_id'] == recipient_id), None)
-        
+        recipient = await get_user(recipient_id)
+
         if not recipient:
             await update.message.reply_text(f"Пользователь с ID {entered_id} не найден.")
             return
@@ -1780,7 +1976,8 @@ async def gift_subscription(update, context):
 async def set_subscription_days(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1829,7 +2026,8 @@ async def set_subscription_days(update, context):
 async def edit_hour_in_chat_with_ai(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1867,7 +2065,8 @@ async def edit_hour_in_chat_with_ai(update, context):
 async def edit_count_in_chat_with_ai(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1906,7 +2105,8 @@ async def edit_count_in_chat_with_ai(update, context):
 async def Limit_books_day(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1945,7 +2145,8 @@ async def Limit_books_day(update, context):
 async def Limit_books_day_subscribe(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1983,7 +2184,8 @@ async def Limit_books_day_subscribe(update, context):
 async def send_notification_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_text, reply_markup, target_group):
     user_id = update.message.from_user.id
 
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     # Проверка, что пользователь администратор
     if user_id not in ADMINS:
@@ -2000,7 +2202,7 @@ async def send_notification_to_users(update: Update, context: ContextTypes.DEFAU
         return
     # Фильтруем пользователей по указанной аудитории
     if target_group == "all":
-        target_users = users  # Все пользователи
+        target_users = users
     elif target_group == "subscribed":
         target_users = [u for u in users if any(sub['user_id'] == u['user_id'] and sub['end_date'] > datetime.now() for sub in user_subscriptions)]
     elif target_group == "unsubscribed":
@@ -2023,7 +2225,8 @@ async def send_notification_to_users(update: Update, context: ContextTypes.DEFAU
 async def search_user(update, context):
     user_id = update.message.from_user.id
 
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2040,9 +2243,9 @@ async def search_user(update, context):
     # Ищем пользователя по user_id или username
     user = None
     if user_input.isdigit():  # Если это user_id (цифры), ищем по ID
-        user = next((u for u in users if u['user_id'] == int(user_input)), None)
+        user = await get_user(user_id)
     else:  # Если это username, ищем по username
-        user = next((u for u in users if u['username'] == user_input), None)
+        user = await get_user_for_username(user_input)
 
     # Если пользователь не найден
     if not user:
@@ -2103,7 +2306,8 @@ async def search_user(update, context):
 async def process_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2163,7 +2367,8 @@ async def process_notification(update: Update, context: ContextTypes.DEFAULT_TYP
 async def process_single_user_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2189,8 +2394,7 @@ async def process_single_user_notification(update: Update, context: ContextTypes
 
     target_user_id = int(target_user_id)
 
-    # Проверяем, существует ли пользователь с таким ID
-    target_user = next((u for u in users if u['user_id'] == target_user_id), None)
+    target_user = await get_user(target_user_id)
     
     if not target_user:
         await update.message.reply_text("⚠️ Пользователь с таким ID не найден.")
@@ -2229,7 +2433,8 @@ async def process_single_user_notification(update: Update, context: ContextTypes
 async def limit_page_in_book(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     # Ищем пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2267,7 +2472,8 @@ async def limit_page_in_book(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def process_single_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2323,7 +2529,7 @@ async def process_single_notification(update: Update, context: ContextTypes.DEFA
 
     # Отправляем уведомление конкретному пользователю
     target_user_id = context.user_data.get('target_user_id')
-    target_user = next((u for u in users if u['user_id'] == target_user_id), None)
+    target_user = await get_user(target_user_id)
 
     if target_user:
         # Отправка уведомления пользователю
@@ -2383,7 +2589,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Используйте /start для выбора режима.")
 
-# Реализация режима "Чат с ИИ"
 async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
 
@@ -2401,17 +2606,13 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.user_data['chat_context']) > 10:
         context.user_data['chat_context'] = context.user_data['chat_context'][-10:]
 
-    # Ищем пользователя в списке users
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    # Ищем пользователя
+    user = await get_user(user_id)
+    print(user)
 
     if not user:
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
         return
-
-    # Инициализируем поле count_words, если его еще нет
-    if 'count_words' not in user:
-        user['count_words'] = 0
-        user['reset_time'] = None  # Для хранения времени сброса лимита
 
     # Ищем активную подписку пользователя
     active_subscription = next(
@@ -2424,34 +2625,46 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if active_subscription is None or active_subscription['end_date'] <= datetime.now():
             current_time = datetime.now(MOSCOW_TZ)
 
-            # Проверяем, нужно ли сбросить лимит
-            if user['reset_time'] and current_time >= user['reset_time']:
-                user['count_words'] = 0
-                user['reset_time'] = None
+            await increment_count_words(user_id)
 
-            # Увеличиваем счетчик сообщений
-            user['count_words'] += 1
+            # Проверяем, нужно ли сбросить лимит
+            user = await get_user(user_id)
+            if user['reset_time'] and current_time >= user['reset_time']:
+                print('мы сюда заходим')
+                await update_count_words(user_id, 0)
+                await update_reset_time(user_id, None)
 
             # Проверка, превышен ли лимит
+            user = await get_user(user_id)
             if user['count_words'] > count_limit_chat_with_ai:
                 # Устанавливаем время сброса лимита
+                user = await get_user(user_id)
                 if not user['reset_time']:
-                    user['reset_time'] = current_time + timedelta(hours=wait_hour)
+                    date = current_time + timedelta(hours=wait_hour)
+                    date_naive = date.replace(tzinfo=None)  # Убираем временную зону
+                    await update_reset_time(user_id, date_naive)  # Обновляем reset_time в базе данных
 
-                # Рассчитываем оставшееся время
-                reset_time = user['reset_time']
-                time_left = reset_time - current_time
-                hours_left = time_left.seconds // 3600
-                minutes_left = (time_left.seconds % 3600) // 60
+                    # Дожидаемся завершения записи времени сброса
+                    user = await get_user(user_id)  # Получаем актуальные данные из базы данных
+                    reset_time = user['reset_time']
 
-                # Сообщение о блокировке
-                await update.message.reply_text(
-                    f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n"
-                    f"🔒 Ваш лимит будет автоматически сброшен через "
-                    f"{hours_left} часов и {minutes_left} минут.\n\n"
-                    f"💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!"
-                )
-                return
+                    if reset_time is not None:
+                        time_left = reset_time - current_time
+                        # Рассчитываем оставшееся время
+                        hours_left, remainder = divmod(time_left.seconds, 3600)
+                        minutes_left, _ = divmod(remainder, 60)
+
+                        # Сообщение о блокировке
+                        await update.message.reply_text(
+                            f"⏳ Вы достигли лимита в {count_limit_chat_with_ai} сообщений! 📩\n\n"
+                            f"🔒 Ваш лимит будет автоматически сброшен через "
+                            f"{hours_left} часов и {minutes_left} минут.\n\n"
+                            f"💎 Хотите больше возможностей? Оформите подписку, чтобы отключить лимит и пользоваться ботом без ограничений!"
+                        )
+                        return
+                else:
+                    await update.message.reply_text("Ошибка: время сброса лимита не установлено. Пожалуйста, попробуйте снова.")
+                    return
 
     # Запрос к ChatGPT
     response = await openai.ChatCompletion.acreate(
@@ -2481,7 +2694,8 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     pdf.multi_cell(0, 10, full_text)
 
     # Проверяем библиотеку пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
     if not user:
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text("⚠️ Ошибка: пользователь не найден. Обратитесь к администратору.")
@@ -2489,15 +2703,38 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
             await update.message.reply_text("⚠️ Error: user not found. Contact your administrator.")
         return
 
-    if "library" not in user:
-        user['library'] = []
-    
-    # Генерируем уникальное название книги
+    user_dict = dict(user)
+
+    # Убедимся, что library — это список
+    if isinstance(user_dict['library'], str):  # Если это строка
+        user_dict['library'] = json.loads(user_dict['library'])  # Преобразуем строку в список
+    elif not isinstance(user_dict['library'], list):  # Если это не список
+        user_dict['library'] = []  # Инициализируем как пустой список
+
+    # Теперь обработаем каждый элемент в user_dict['library']
+    for i in range(len(user_dict['library'])):
+        if isinstance(user_dict['library'][i], str):  # Если элемент — строка
+            user_dict['library'][i] = {'title': user_dict['library'][i]}  # Преобразуем в словарь
+
+    # Далее проверяем уникальность
     unique_title = exact_title
-    suffix = 0
-    while any(book['title'] == unique_title for book in user['library']):
+    suffix = 1
+
+    # Проверяем на уникальность название книги
+    while any(book['title'] == unique_title for book in user_dict['library']):
         suffix += 1
         unique_title = f"{exact_title}_{suffix}"
+    
+    # Преобразуем в строку JSON с корректной обработкой datetime
+    def datetime_converter(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()  # Преобразуем datetime в строку ISO
+        raise TypeError(f"Type {obj.__class__.__name__} not serializable")
+
+    library_json = json.dumps(user_dict, default=datetime_converter)
+
+    # После изменений можно записать обратно в базу данных
+    await update_user_library_dict(user_id, library_json)
 
     # Уникальное имя файла
     file_name = f"{user_id}_{unique_title}.pdf"
@@ -2515,35 +2752,42 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     await update.message.reply_document(document=pdf_output, filename=f"{unique_title}.pdf")
 
     # Добавляем книгу в библиотеку
-    user['library'].append({
+    user_dict['library'].append({
         "title": unique_title,
         "file_path": file_path,  # Сохраняем полный путь к файлу
         "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
+    # Обновляем библиотеку в базе данных
+    library_json = json.dumps(user_dict, default=datetime_converter)
+    await update_user_library_dict(user_id, library_json)
+
     # Уведомляем пользователя
     if context.user_data.get('book_language') == 'russian':
         await update.message.reply_text(
             f"📚 Книга {unique_title} готова! 🎉\n📚 Книга успешно добавлена в вашу библиотеку! 🎉",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library')],
-                [InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')]
-            ])
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library'),
+                InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
+            ]])
         )
     else:
         await update.message.reply_text(
             f"📚 Book {unique_title} is ready! 🎉\n📚 The book has been successfully added to your library! 🎉",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📚 My library", callback_data='my_library')],
-                [InlineKeyboardButton("🔙 Back to menu", callback_data='menu')]
-            ])
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📚 My library", callback_data='my_library'),
+                InlineKeyboardButton("🔙 Back to menu", callback_data='menu')
+            ]])
         )
 
 async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_pages: int):
     """Асинхронная обработка создания книги."""
     user_id = update.message.from_user.id
-    user = next((u for u in users if u['user_id'] == user_id), None)
-    user['is_process_book'] = True
+    user = await get_user(user_id)
+    print(user)
+    # Обновляем поле is_process_book в базе данных
+    await update_user_process_book(user_id, True)
+
     list_parts = context.user_data.get('list_parts')
     exact_title = context.user_data.get('exact_title')
     
@@ -2866,17 +3110,22 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
                         last_text_in_pdf.append(chat_gpt_reply)
 
     full_text = "\n\n".join(last_text_in_pdf)
-    user['daily_book_count'] += 1
+
+    current_book_count = user['daily_book_count']
+    new_book_count = current_book_count + 1
+    # Обновляем значение в базе данных
+    await update_user_daily_book_count(user_id, new_book_count)
+    await update_user_process_book(user_id, False)
 
     await generate_pdf_and_send(update, context, full_text, exact_title)
-    user['is_process_book'] = False
     context.user_data.clear()
 
 async def search_books(update, context):
     user_id = update.message.from_user.id
 
     # Проверка пользователя
-    user = next((u for u in users if u['user_id'] == user_id), None)
+    user = await get_user(user_id)
+    print(user)
     if not user:
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2907,9 +3156,13 @@ async def search_books(update, context):
     )
 
     today_date = datetime.now().date()
+    print(user.get('last_book_date'))
+    print(today_date)
     if user.get('last_book_date') != today_date:
-        user['last_book_date'] = today_date
-        user['daily_book_count'] = 0
+        await update_user_last_book_date(user_id, today_date)
+        #user['last_book_date'] = today_date
+        #user['daily_book_count'] = 0
+        await update_user_daily_book_count(user_id, 0)
 
     # Проверка лимита на книги за день
     daily_book_count = user.get('daily_book_count', 0)
