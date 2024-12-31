@@ -15,22 +15,31 @@ from dotenv import load_dotenv
 import os
 from yookassa import Configuration, Payment
 import uuid
+import asyncpg
 
 load_dotenv()
 
+DB_CONFIG = {
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": os.getenv("DB_NAME"),
+    "host": os.getenv("DB_HOST"),
+    "port": int(os.getenv("DB_PORT")),
+}
+db_pool = None
 Configuration.account_id = os.getenv("account_id")
 Configuration.secret_key = os.getenv("secret_key")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
 test = datetime.now() + timedelta(days=-1)
-ADMINS = [5706003073, 2125819462]
 user_subscriptions = [{'user_id': 2125819462, "subscription_name": 'test', 'price': 0, "end_date": test}]
 user_subscriptions = []
 users = []
 count_words_user = []
 
 # переменые для управление из админ панели
+ADMINS = [5706003073, 2125819462]
 subscription_chat_with_ai_is_true = True
 subscription_search_book_is_true = True
 count_limit_chat_with_ai = 10
@@ -61,7 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Добавление нового пользователя в список пользователей
     if not any(user['user_id'] == user_id for user in users):
-        users.append({'user_id': user_id, 'username': username, 'daily_book_count': 0, 'last_book_date': None, 'is_process_book': False})
+        users.append({'user_id': user_id, 'username': username, 'daily_book_count': 0, 'last_book_date': None, 'is_process_book': False, 'count_words': 0, 'reset_time': None})
 
     # Создаем меню
     await handle_menu(update, context)
@@ -1644,15 +1653,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] >= datetime.now()),
             None
         )
-        user_data = next((user for user in count_words_user if user['user_id'] == user_id), None)
-
-        if not user_data:
-            # Если пользователя нет в count_words_user, инициализируем с пустыми значениями
-            user_data = {'count': 0}
+        # Инициализируем поле count_words, если его еще нет
+        if 'count_words' not in user:
+            user['count_words'] = 0
 
         if not active_subscription:
             # Для пользователей без подписки
-            sms_limit = user_data.get('count', 0)  # Лимит сообщений
+            sms_limit = user['count_words']  # Количество использованных сообщений
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
             ])
@@ -2382,6 +2389,7 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Получаем ID пользователя
     user_id = update.message.from_user.id
+
     # Убедитесь, что 'chat_context' инициализирован
     if 'chat_context' not in context.user_data:
         context.user_data['chat_context'] = []
@@ -2391,15 +2399,19 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Ограничиваем историю до 10 сообщений
     if len(context.user_data['chat_context']) > 10:
-        #print('больше 10 в истории чата, обрезаем берем только 10 последних')
         context.user_data['chat_context'] = context.user_data['chat_context'][-10:]
 
-    # Ищем пользователя
+    # Ищем пользователя в списке users
     user = next((u for u in users if u['user_id'] == user_id), None)
 
-    if not user:####################################################################################################################################
+    if not user:
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
         return
+
+    # Инициализируем поле count_words, если его еще нет
+    if 'count_words' not in user:
+        user['count_words'] = 0
+        user['reset_time'] = None  # Для хранения времени сброса лимита
 
     # Ищем активную подписку пользователя
     active_subscription = next(
@@ -2410,36 +2422,24 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if subscription_chat_with_ai_is_true:
         # Если подписка не активна
         if active_subscription is None or active_subscription['end_date'] <= datetime.now():
-            # Проверяем пользователя в списке count_words_user
-            user_data = next((user for user in count_words_user if user['user_id'] == user_id), None)
+            current_time = datetime.now(MOSCOW_TZ)
 
-            # Если лимит сообщений исчерпан
-            if user_data:
-                # Проверка сброса лимита
-                current_time = datetime.now(MOSCOW_TZ)
+            # Проверяем, нужно ли сбросить лимит
+            if user['reset_time'] and current_time >= user['reset_time']:
+                user['count_words'] = 0
+                user['reset_time'] = None
 
-                # Если время сброса истекло, сбрасываем лимит
-                if 'reset_time' in user_data and current_time >= user_data['reset_time']:
-                    user_data['count'] = 0
-                    del user_data['reset_time']
-
-                # Увеличиваем счетчик сообщений
-                user_data['count'] += 1
-            else:
-                # Если пользователя нет, добавляем его в список
-                user_data = {'user_id': user_id, 'count': 1}
-                count_words_user.append(user_data)
+            # Увеличиваем счетчик сообщений
+            user['count_words'] += 1
 
             # Проверка, превышен ли лимит
-            if user_data['count'] > count_limit_chat_with_ai:
-                current_time = datetime.now(MOSCOW_TZ)
-
-                # Устанавливаем или обновляем время сброса
-                if 'reset_time' not in user_data or current_time >= user_data['reset_time']:
-                    user_data['reset_time'] = current_time + timedelta(hours=wait_hour)
+            if user['count_words'] > count_limit_chat_with_ai:
+                # Устанавливаем время сброса лимита
+                if not user['reset_time']:
+                    user['reset_time'] = current_time + timedelta(hours=wait_hour)
 
                 # Рассчитываем оставшееся время
-                reset_time = user_data['reset_time']
+                reset_time = user['reset_time']
                 time_left = reset_time - current_time
                 hours_left = time_left.seconds // 3600
                 minutes_left = (time_left.seconds % 3600) // 60
