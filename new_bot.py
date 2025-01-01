@@ -33,12 +33,6 @@ Configuration.secret_key = os.getenv("secret_key")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
-test = datetime.now() + timedelta(days=-1)
-user_subscriptions = [{'user_id': 2125819462, "subscription_name": 'test', 'price': 0, "end_date": test}]
-user_subscriptions = []
-users = []
-count_words_user = []
-
 # переменые для управление из админ панели
 ADMINS = list(map(int, os.getenv("ADMINS", "").split(',')))
 subscription_chat_with_ai_is_true = True
@@ -56,6 +50,71 @@ subscriptions = []
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 # Установите API-ключ OpenAI
 openai.api_key = openai_api_key
+
+# Получение пользователей без подписок
+async def get_users_without_subscriptions():
+    conn = await connect_db()
+    try:
+        no_subscription_users = await conn.fetch("""
+            SELECT u.user_id
+            FROM users u
+            LEFT JOIN user_subscriptions us ON u.user_id = us.user_id
+            WHERE us.user_id IS NULL OR us.end_date < $1
+        """, datetime.now().date())
+        return no_subscription_users
+    finally:
+        await close_db(conn)
+
+# Получение пользователей с активными подписками
+async def get_users_with_active_subscriptions():
+    conn = await connect_db()
+    try:
+        active_users = await conn.fetch("""
+            SELECT u.user_id
+            FROM users u
+            JOIN user_subscriptions us ON u.user_id = us.user_id
+            WHERE us.end_date > $1
+        """, datetime.now().date())
+        return active_users
+    finally:
+        await close_db(conn)
+
+# Получение всех пользователей
+async def get_all_users():
+    conn = await connect_db()
+    try:
+        users = await conn.fetch("SELECT user_id FROM users")  # Здесь предполагается, что таблица users имеет поле user_id
+        return users
+    finally:
+        await close_db(conn)
+
+# Добавление новой подписки
+async def add_subscription_db(user_id, subscription_name, subscription_price, end_date):
+    conn = await connect_db()
+    await conn.execute("""
+        INSERT INTO user_subscriptions (user_id, subscription_name, subscription_price, end_date)
+        VALUES ($1, $2, $3, $4)
+    """, user_id, subscription_name, subscription_price, end_date)
+    await close_db(conn)
+
+async def delete_subscription(subscription_id):
+    conn = await connect_db()
+    await conn.execute("""
+        DELETE FROM user_subscriptions
+        WHERE id = $1
+    """, subscription_id)
+    await close_db(conn)
+
+async def get_user_subscriptions(user_id):
+    conn = await connect_db()
+    try:
+        # Получение данных из таблицы
+        user_subscriptions = await conn.fetch("""
+            SELECT * FROM user_subscriptions WHERE user_id = $1
+        """, user_id)
+    finally:
+        await close_db(conn)
+    return user_subscriptions
 
 async def update_reset_time(user_id, reset_time):
     conn = await connect_db()
@@ -213,10 +272,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f'создаем нового пользователя в базе даных {user_id}')
         await add_user(user_id, username)
 
-    # Добавление нового пользователя в список пользователей
-    #if not any(user['user_id'] == user_id for user in users):
-    #    users.append({'user_id': user_id, 'username': username, 'daily_book_count': 0, 'last_book_date': None, 'is_process_book': False, 'count_words': 0, 'reset_time': None})
-
     # Создаем меню
     await handle_menu(update, context)
 
@@ -233,7 +288,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Получаем пользователя из базы данных
     user = await get_user(user_id)
-    print(user)
+
     if user is None:
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
         return
@@ -271,12 +326,14 @@ async def check_payment_status(payment_id, user_id, subscription_name, subscript
             # Оплата успешна, активируем подписку
             end_date = datetime.now() + timedelta(days=30)
 
-            user_subscriptions.append({
-                "user_id": user_id,
-                "subscription_name": subscription_name,
-                "price": subscription_price,
-                "end_date": end_date
-            })
+            await add_subscription_db(user_id, subscription_name, float(subscription_price), end_date)
+            #user_subscriptions.append({
+            #    "user_id": user_id,
+            #    "subscription_name": subscription_name,
+            #    "price": subscription_price,
+            #    "end_date": end_date
+            #})
+
 
             await query.edit_message_text(
                 f"✅ Подписка '{subscription_name}' успешно активирована!\n\n"
@@ -379,7 +436,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "my_library":
         user_id = query.from_user.id
         # Ищем пользователя
-        user = next((u for u in users if u['user_id'] == user_id), None)
+        user = await get_user(user_id)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -410,7 +467,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
         user = await get_user(user_id)
-        print(user)
+
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или удалена")
             return
@@ -433,7 +490,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
         user = await get_user(user_id)
-        print(user)
+
 
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или уже удалена")
@@ -480,7 +537,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         book_index = int(query.data.split("_")[2])  # Получаем индекс книги
         user = await get_user(user_id)
-        print(user)
+
 
         if not user or 'library' not in user or book_index >= len(user['library']):
             await query.edit_message_text("⚠️ Книга не найдена или удалена")
@@ -518,33 +575,39 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
-
-        if not user:####################################################################################################################################
+        if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
-        global user_subscriptions
-        # Проверяем наличие подписок для пользователя
-        active_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] >= datetime.now()),
-            None
-        )
-        expired_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] < datetime.now()),
-            None
-        )
-        if active_subscription:
-            # Если подписка активна
-            subscription_status = "🟢 подписка активна"
-            subscription_text = f"✅ Ваша подписка '{active_subscription['subscription_name']}' активна."
-        elif expired_subscription:
-            # Если есть истекшая подписка
-            subscription_status = "🔴 Подписка истекла"
-            subscription_text = f"❌ Ваша подписка '{expired_subscription['subscription_name']}' истекла, оформите новую"
+
+        # Получаем подписки пользователя
+        user_subscriptions = await get_user_subscriptions(user_id)
+        if not user_subscriptions:
+            # Если подписок нет
+            subscription_status = "⚪️ Нет подписки"
+            subscription_text = "❌ У вас нет подписки.\n💸 Оформите подписку, чтобы получить доступ к функциям."
         else:
-            # Если подписок не было
-            subscription_status = "⚪ Нет подписки"
-            subscription_text = "❌ У вас нет подписки.\n💸 Оформите подписку, чтобы получить доступ к функциям"
+            # Проверяем активные и истекшие подписки
+            active_subscription = next(
+                (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+                None
+            )
+            expired_subscription = next(
+                (sub for sub in user_subscriptions if sub["end_date"] < datetime.now().date()), 
+                None
+            )
+
+            if active_subscription:
+                # Если есть активная подписка
+                subscription_status = "🟢 Подписка активна"
+                subscription_text = f"✅ Ваша подписка '{active_subscription['subscription_name']}' активна до {active_subscription['end_date'].strftime('%d.%m.%Y')}."
+            elif expired_subscription:
+                # Если есть истекшая подписка
+                subscription_status = "🔴 Подписка истекла"
+                subscription_text = f"❌ Ваша подписка '{expired_subscription['subscription_name']}' истекла {expired_subscription['end_date'].strftime('%d.%m.%Y')}.\n💸 Оформите новую подписку."
+            else:
+                # Если подписок нет
+                subscription_status = "⚪️ Нет подписки"
+                subscription_text = "❌ У вас нет подписки.\n💸 Оформите подписку, чтобы получить доступ к функциям."
 
         # Генерация клавиатуры с обновленным текстом
         subscriptions_keyboard = [
@@ -556,49 +619,58 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Отображение сообщения с выбором
         await query.edit_message_text(
-            f"{subscription_text}\n\n✨ Выберите действие",
+            f"{subscription_text}\n\n✨ Выберите действие:",
             reply_markup=reply_markup
         )
 
     elif query.data == "active_subscription":
-        # Ищем активную подписку пользователя
+        # Идентификатор пользователя
         user_id = query.from_user.id
-        # Ищем пользователя
-        user = await get_user(user_id)
-        print(user)
 
-        if not user:####################################################################################################################################
+        # Получаем данные пользователя
+        user = await get_user(user_id)
+        if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
-        active_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
-        )
-        
-        if active_subscription:
-            # Проверяем, истек ли срок действия
-            if active_subscription["end_date"] >= datetime.now():
+
+        # Получаем подписки пользователя из базы данных
+        user_subscriptions = await get_user_subscriptions(user_id)
+
+        if not user_subscriptions:
+            # Если подписок нет
+            message = "⚠️ У вас пока нет подписки."
+        else:
+            # Ищем активную подписку
+            active_subscription = next(
+                (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+                None
+            )
+
+            if active_subscription:
                 # Если подписка активна
                 end_date_str = active_subscription["end_date"].strftime('%d.%m.%Y')
                 message = (
                     f"🟢 У вас активная подписка: {active_subscription['subscription_name']}\n"
-                    f"💰 Цена: {active_subscription['price']} руб.\n"
+                    f"💰 Цена: {active_subscription['subscription_price']} руб.\n"
                     f"📅 Действует до: {end_date_str}"
                 )
             else:
-                # Если срок действия истек
+                # Если активной подписки нет (все истекли)
+                expired_subscription = max(
+                    user_subscriptions, 
+                    key=lambda sub: sub["end_date"]
+                )  # Берем последнюю истекшую подписку
                 message = (
-                    f"❌ Ваша подписка '{active_subscription['subscription_name']}' истекла\n"
-                    f"💰 Цена была: {active_subscription['price']} руб.\n"
-                    f"📅 Срок действия истек: {active_subscription['end_date'].strftime('%d.%m.%Y')}"
+                    f"❌ Ваша подписка '{expired_subscription['subscription_name']}' истекла.\n"
+                    f"💰 Цена была: {expired_subscription['subscription_price']} руб.\n"
+                    f"📅 Срок действия истек: {expired_subscription['end_date'].strftime('%d.%m.%Y')}\n"
+                    "💸 Оформите новую подписку, чтобы продолжить пользоваться сервисом."
                 )
-        else:
-            # Если подписки у пользователя нет
-            message = "⚠️ У вас пока нет подписки"
 
         # Кнопка "Назад"
         back_button = [[InlineKeyboardButton("🔙 Назад", callback_data="subscriptions_menu")]]
         reply_markup = InlineKeyboardMarkup(back_button)
-        
+
         # Отправляем сообщение
         await query.edit_message_text(message, reply_markup=reply_markup)
 
@@ -606,7 +678,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -633,7 +704,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -677,7 +747,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -686,11 +755,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         subscription_name = query.data.replace("buy_", "")
         
         # Проверяем, есть ли активная подписка
+        user_subscriptions = await get_user_subscriptions(user_id)
+        # Проверяем активные и истекшие подписки
         active_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] >= datetime.now()),
+            (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
             None
         )
-        
         if active_subscription:
             # Если есть активная подписка, выводим сообщение и выходим
             await query.edit_message_text(
@@ -705,14 +775,13 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             # Удаляем подписку, если она истекла
             expired_subscription = next(
-                (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] < datetime.now()),
+                (sub for sub in user_subscriptions if sub["end_date"] < datetime.now().date()), 
                 None
             )
             if expired_subscription:
                 # Удаляем подписку из списка
-                user_subscriptions = [sub for sub in user_subscriptions if sub != expired_subscription]
-                #print("Удалено:", expired_subscription)
-                #print("Оставшиеся подписки:", user_subscriptions)
+                await delete_subscription(user_id)
+                print('удаляем истекшую подписку чтоб добавить новую')
 
         # Поиск подписки в списке
         selected_subscription = next(
@@ -762,7 +831,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -790,7 +858,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_mode'] = None
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -847,7 +914,7 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data == "all_users":
         # Получаем общее количество пользователей
-        total_users = len(users)
+        total_users = len(await get_all_users())
 
         # Формируем сообщение и клавиатуру с кнопками
         text = f"👥 Всего пользователей в боте: {total_users}"
@@ -862,11 +929,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, reply_markup=reply_markup)
 
     elif query.data == "subscribed_users":
-        # Получаем список пользователей с подписками
-        subscribed_users = [user for user in user_subscriptions if user.get("subscription_name")]
-        
         # Получаем общее количество пользователей с подписками
-        total_subscribed_users = len(subscribed_users)
+        total_subscribed_users = len(await get_users_with_active_subscriptions())
 
         # Формируем сообщение и клавиатуру с кнопками
         text = f"🔑 Пользователи с подписками: {total_subscribed_users}"
@@ -882,11 +946,8 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, reply_markup=reply_markup)
 
     elif query.data == "unsubscribed_users":
-        # Получаем список пользователей с подписками
-        subscribed_users = [user['user_id'] for user in user_subscriptions]  # Список пользователей с подписками
-        
         # Находим пользователей без подписки (вычитаем из списка всех пользователей тех, кто есть в user_subscriptions)
-        unsubscribed_users = [user for user in users if user['user_id'] not in subscribed_users]
+        unsubscribed_users = await get_users_without_subscriptions()
 
         # Получаем общее количество пользователей без подписок
         total_unsubscribed_users = len(unsubscribed_users)
@@ -909,7 +970,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_mode'] = None
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -932,7 +992,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -962,7 +1021,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['current_mode'] = None
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
@@ -987,7 +1045,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
 
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1016,7 +1073,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1064,7 +1120,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1088,7 +1143,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1115,7 +1169,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1152,7 +1205,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1170,7 +1222,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1188,7 +1239,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1207,7 +1257,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1243,7 +1292,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1268,7 +1316,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1305,7 +1352,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1341,7 +1387,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1359,7 +1404,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1377,7 +1421,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1402,7 +1445,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1435,7 +1477,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1456,7 +1497,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1476,7 +1516,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1513,7 +1552,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1558,7 +1596,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:####################################################################################################################################
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1580,20 +1617,22 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
 
-        # Проверяем подписку пользователя
+        # Проверяем, есть ли активная подписка
+        user_subscriptions = await get_user_subscriptions(user_id)
+        # Проверяем активные и истекшие подписки
         active_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
+            (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+            None
         )
-
+        print(user_subscriptions)
         if subscription_search_book_is_true:
             # Сообщение об ограничениях для пользователей без подписки
-            if not active_subscription or active_subscription['end_date'] <= datetime.now():
+            if not active_subscription:
                 await query.edit_message_text(
                     "🔒 У вас нет активной подписки, поэтому функции поиска книг будут ограничены:\n\n"
                     f"1️⃣ Максимальное количество страниц: от 5 до {limit_page_book}.\n"
@@ -1624,7 +1663,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1656,7 +1694,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1683,7 +1720,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1710,7 +1746,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1737,7 +1772,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1764,7 +1798,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1792,7 +1825,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1814,7 +1846,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1836,15 +1867,15 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.callback_query.from_user.id
         # Ищем пользователя
         user = await get_user(user_id)
-        print(user)
 
         if not user:
             await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
 
         # Проверяем наличие подписки у пользователя
+        user_subscriptions = await get_user_subscriptions(user_id)
         active_subscription = next(
-            (sub for sub in user_subscriptions if sub["user_id"] == user_id and sub["end_date"] >= datetime.now()),
+            (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
             None
         )
         # Инициализируем поле count_words, если его еще нет
@@ -1883,7 +1914,6 @@ async def add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1935,7 +1965,6 @@ async def gift_subscription(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -1977,7 +2006,6 @@ async def set_subscription_days(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2005,11 +2033,31 @@ async def set_subscription_days(update, context):
         recipient_id = context.user_data['recipient_id']
         selected_subscription = context.user_data['selected_subscription']
 
+        # Проверяем, есть ли активная подписка
+        user_subscriptions = await get_user_subscriptions(recipient_id)
+        # Проверяем активные и истекшие подписки
+        active_subscription = next(
+            (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+            None
+        )
+        if active_subscription:
+            await update.message.reply_text(
+                f"⚠️ У Пользователя уже есть активная подписка: {active_subscription['subscription_name']}.\n"
+                f"📅 Действующая до {active_subscription['end_date'].strftime('%d.%m.%Y')}.\n\n"
+                "Вы не можете подарить новую подписку, пока не истечёт текущая.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
+                ])
+            )
+            # Сброс текущего состояния
+            context.user_data['current_mode'] = None
+            context.user_data['recipient_id'] = None
+            context.user_data['selected_subscription'] = None
+            return
         # Рассчитываем дату окончания подписки
         end_date = datetime.now() + timedelta(days=days)
 
-        # Добавляем подписку в список (или обновляем существующую)
-        user_subscriptions.append({'user_id': recipient_id, 'subscription_name': selected_subscription, 'price': 0, 'end_date': end_date})
+        await add_subscription_db(recipient_id, selected_subscription, 0.0, end_date)
 
         # Оповещаем админа о подарке
         await update.message.reply_text(f"Подписка '{selected_subscription}' подарена пользователю с ID {recipient_id}. Подписка активна до {end_date.strftime('%d.%m.%Y')}.")
@@ -2027,7 +2075,6 @@ async def edit_hour_in_chat_with_ai(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2066,7 +2113,6 @@ async def edit_count_in_chat_with_ai(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2106,7 +2152,6 @@ async def Limit_books_day(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2146,7 +2191,6 @@ async def Limit_books_day_subscribe(update, context):
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2184,15 +2228,9 @@ async def Limit_books_day_subscribe(update, context):
 async def send_notification_to_users(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_text, reply_markup, target_group):
     user_id = update.message.from_user.id
 
+    # Получаем данные о пользователе
     user = await get_user(user_id)
-    print(user)
-
-    # Проверка, что пользователь администратор
-    if user_id not in ADMINS:
-        await update.message.reply_text("У вас нет прав для отправки уведомлений.")
-        return
-
-    if not user:####################################################################################################################################
+    if not user:
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
         return
 
@@ -2200,14 +2238,20 @@ async def send_notification_to_users(update: Update, context: ContextTypes.DEFAU
     if user_id not in ADMINS:
         await update.message.reply_text("У вас нет прав для отправки уведомлений.")
         return
+
     # Фильтруем пользователей по указанной аудитории
     if target_group == "all":
+        # Получаем всех пользователей из базы данных
+        users = await get_all_users()
         target_users = users
     elif target_group == "subscribed":
-        target_users = [u for u in users if any(sub['user_id'] == u['user_id'] and sub['end_date'] > datetime.now() for sub in user_subscriptions)]
+        # Получаем пользователей с активными подписками
+        target_users = await get_users_with_active_subscriptions()
     elif target_group == "unsubscribed":
-        target_users = [u for u in users if not any(sub['user_id'] == u['user_id'] and sub['end_date'] > datetime.now() for sub in user_subscriptions)]
+        # Получаем пользователей без подписок
+        target_users = await get_users_without_subscriptions()
     else:
+        await update.message.reply_text("Некорректная группа целевых пользователей.")
         return
 
     # Отправляем уведомления
@@ -2219,14 +2263,13 @@ async def send_notification_to_users(update: Update, context: ContextTypes.DEFAU
                 reply_markup=reply_markup,
             )
         except Exception as e:
-            #print(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
+            print(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
             pass
 
 async def search_user(update, context):
     user_id = update.message.from_user.id
 
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2252,34 +2295,28 @@ async def search_user(update, context):
         await update.message.reply_text("⚠️ Пользователь которого ищите не найден, укажите верные данные")
         return
 
-    # Ищем активную подписку пользователя
-    global user_subscriptions
+    # Проверяем, есть ли активная подписка
+    user_subscriptions = await get_user_subscriptions(user_id)
+    # Проверяем активные и истекшие подписки
     active_subscription = next(
-        (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
+        (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+        None
     )
 
     if active_subscription:
         subscription_name = active_subscription["subscription_name"]
         end_date = active_subscription["end_date"]
-        time_left = end_date - datetime.now()  # Оставшееся время
 
-        if time_left.total_seconds() > 0:
-            if time_left.days >= 1:
-                # Если осталось больше 1 дня
-                subscription_status = (
-                    f"Активна до {end_date.strftime('%d.%m.%Y')} ({time_left.days} дней осталось)"
-                )
-            else:
-                # Если осталось меньше 1 дня, отображаем часы
-                hours_left = time_left.total_seconds() // 3600
-                subscription_status = (
-                    f"Активна до {end_date.strftime('%d.%m.%Y')} ({int(hours_left)} часов осталось)"
-                )
-        else:
-            subscription_status = "Истекла"
-    else:
+        subscription_status = (
+            f"Активна до {end_date.strftime('%d.%m.%Y')}"
+        )
+    elif not user_subscriptions:
         subscription_name = "Нет"
         subscription_status = "Нет активной подписки"
+        
+    elif not active_subscription or active_subscription['end_date'].date() <= datetime.now().date():
+        subscription_name = "Нет"
+        subscription_status = "Истекла"
 
     # Подсчёт количества книг в библиотеке
     books_count = len(user.get('library', []))
@@ -2307,7 +2344,6 @@ async def process_notification(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.message.from_user.id
 
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2368,7 +2404,6 @@ async def process_single_user_notification(update: Update, context: ContextTypes
     user_id = update.message.from_user.id
 
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2434,7 +2469,6 @@ async def limit_page_in_book(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.message.from_user.id
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2473,7 +2507,6 @@ async def process_single_notification(update: Update, context: ContextTypes.DEFA
     user_id = update.message.from_user.id
 
     user = await get_user(user_id)
-    print(user)
 
     if not user:####################################################################################################################################
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -2608,21 +2641,22 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Ищем пользователя
     user = await get_user(user_id)
-    print(user)
 
     if not user:
         await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
         return
 
     # Ищем активную подписку пользователя
+    user_subscriptions = await get_user_subscriptions(user_id)
     active_subscription = next(
-        (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
+        (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+        None
     )
 
     # Если админ выключил проверку подписки
     if subscription_chat_with_ai_is_true:
         # Если подписка не активна
-        if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+        if active_subscription is None:
             current_time = datetime.now(MOSCOW_TZ)
 
             await increment_count_words(user_id)
@@ -2695,7 +2729,7 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
 
     # Проверяем библиотеку пользователя
     user = await get_user(user_id)
-    print(user)
+
     if not user:
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text("⚠️ Ошибка: пользователь не найден. Обратитесь к администратору.")
@@ -2784,7 +2818,7 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
     """Асинхронная обработка создания книги."""
     user_id = update.message.from_user.id
     user = await get_user(user_id)
-    print(user)
+
     # Обновляем поле is_process_book в базе данных
     await update_user_process_book(user_id, True)
 
@@ -3125,7 +3159,7 @@ async def search_books(update, context):
 
     # Проверка пользователя
     user = await get_user(user_id)
-    print(user)
+
     if not user:
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
@@ -3150,9 +3184,10 @@ async def search_books(update, context):
                 reply_markup=reply_markup
             )
         return
-    # Ищем активную подписку пользователя
+    user_subscriptions = await get_user_subscriptions(user_id)
     active_subscription = next(
-        (sub for sub in user_subscriptions if sub["user_id"] == user_id), None
+        (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
+        None
     )
 
     today_date = datetime.now().date()
@@ -3167,7 +3202,7 @@ async def search_books(update, context):
     # Проверка лимита на книги за день
     daily_book_count = user.get('daily_book_count', 0)
     if subscription_search_book_is_true:
-        if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+        if active_subscription is None:
             if daily_book_count >= count_limit_book_day:
                 if context.user_data.get('book_language') == 'russian':
                     await update.message.reply_text(
@@ -3217,7 +3252,7 @@ async def search_books(update, context):
             return
 
         if subscription_search_book_is_true:
-            if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+            if active_subscription is None:
                 if num_pages < 5 or num_pages > limit_page_book:
                     if context.user_data.get('book_language') == 'russian':
                         await update.message.reply_text(f"✏️ Количество страниц должно быть от 5 до {limit_page_book}")
@@ -3260,7 +3295,7 @@ async def search_books(update, context):
         context.user_data['exact_title'] = exact_title
         context.user_data['list_parts'] = list_parts
         if subscription_search_book_is_true:
-            if active_subscription is None or active_subscription['end_date'] <= datetime.now():
+            if active_subscription is None:
                 if context.user_data.get('book_language') == 'russian':
                     await update.message.reply_text(
                         f"📚 Книга {exact_title} найдена! 🎉\n"
