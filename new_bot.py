@@ -51,6 +51,39 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 # Установите API-ключ OpenAI
 openai.api_key = openai_api_key
 
+# Функция для удаления книги из базы данных
+async def delete_book_from_db(book_id: int):
+    # Устанавливаем соединение с базой данных
+    conn = await connect_db()
+    try:
+        # Выполняем запрос на удаление книги по ее id
+        await conn.execute('DELETE FROM books WHERE id = $1', book_id)
+    finally:
+        # Закрываем соединение
+        await close_db(conn)
+
+async def get_books_for_user(user_id: int):
+    conn = await connect_db()
+    try:
+        # Получение данных из таблицы
+        user_books = await conn.fetch("""
+            SELECT id, title, path FROM books WHERE user_id = $1
+        """, user_id)
+    finally:
+        await close_db(conn)
+    return user_books
+
+async def get_user_library(user_id):
+    conn = await connect_db()
+    try:
+        # Получение данных из таблицы
+        user_subscriptions = await conn.fetch("""
+            SELECT * FROM books WHERE user_id = $1
+        """, user_id)
+    finally:
+        await close_db(conn)
+    return user_subscriptions
+
 # Получение пользователей без подписок
 async def get_users_without_subscriptions():
     conn = await connect_db()
@@ -327,13 +360,6 @@ async def check_payment_status(payment_id, user_id, subscription_name, subscript
             end_date = datetime.now() + timedelta(days=30)
 
             await add_subscription_db(user_id, subscription_name, float(subscription_price), end_date)
-            #user_subscriptions.append({
-            #    "user_id": user_id,
-            #    "subscription_name": subscription_name,
-            #    "price": subscription_price,
-            #    "end_date": end_date
-            #})
-
 
             await query.edit_message_text(
                 f"✅ Подписка '{subscription_name}' успешно активирована!\n\n"
@@ -439,47 +465,55 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         user = await get_user(user_id)
 
         if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору")
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
-
-        # Формируем список книг
-        if user.get('library'):
+        
+        # Получаем список книг пользователя из базы данных
+        user_library = await get_user_library(user_id)
+        print(user_library)
+        if user_library:
+            # Если у пользователя есть книги
             books_list = "\n".join(
-                [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
+                [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user_library)]
             )
-            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней"
+            library_text = f"📚 Ваши книги\n\n{books_list}\n\nВыберите книгу, чтобы выполнить действия с ней."
             keyboard = [
-                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
-                for idx, book in enumerate(user['library'])
+                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{book['id']}")]
+                for book in user_library
             ]
-            keyboard.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")])
         else:
+            # Если у пользователя нет книг
             library_text = "📚 Ваша библиотека пуста. Добавьте книги через поиск!"
             keyboard = [
                 [InlineKeyboardButton("📚 Поиск книг", callback_data="search_books")],
-                [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
             ]
 
+        # Добавляем кнопку "Назад"
+        keyboard.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")])
+
+        # Формируем разметку и отправляем сообщение
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(library_text, reply_markup=reply_markup)
 
     elif query.data.startswith("book_options_"):
+        book_id = int(query.data.split("_")[2])  # Получаем id книги
         user_id = query.from_user.id
-        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
-        user = await get_user(user_id)
+        user_books = await get_books_for_user(user_id)
 
-        if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или удалена")
+        # Находим книгу по её id
+        selected_book = next((book for book in user_books if book['id'] == book_id), None)
+
+        if not selected_book:
+            await query.edit_message_text("⚠️ Книга не найдена или удалена.")
             return
 
-        selected_book = user['library'][book_index]
         book_title = selected_book['title']
 
         # Текст и кнопки для выбранной книги
         options_text = f"📘 Вы выбрали книгу: {book_title}\n\nВыберите действие"
         keyboard = [
-            [InlineKeyboardButton("📤 Прислать книгу в чат", callback_data=f"send_book_{book_index}")],
-            [InlineKeyboardButton("🗑️ Удалить книгу", callback_data=f"delete_book_{book_index}")],
+            [InlineKeyboardButton("📤 Прислать книгу в чат", callback_data=f"send_book_{book_id}")],
+            [InlineKeyboardButton("🗑 Удалить книгу", callback_data=f"delete_book_{book_id}")],
             [InlineKeyboardButton("🔙 Назад", callback_data="my_library")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -488,36 +522,45 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif query.data.startswith("delete_book_"):
         user_id = query.from_user.id
-        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
+        book_id = int(query.data.split("_")[2])  # Получаем ID книги из callback_data
         user = await get_user(user_id)
 
-
-        if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или уже удалена")
+        if not user:
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
 
-        # Удаляем файл книги
-        selected_book = user['library'][book_index]
-        file_path = selected_book['file_path']
+        # Получаем книги пользователя из базы данных
+        books = await get_books_for_user(user_id)
+
+        # Ищем книгу по ее ID
+        selected_book = next((book for book in books if book['id'] == book_id), None)
+
+        if not selected_book:
+            await query.edit_message_text("⚠️ Книга не найдена.")
+            return
+
+        file_path = selected_book['path']  # Путь к файлу
         book_title = selected_book['title']
 
+        # Удаляем файл книги, если он существует
         try:
             os.remove(file_path)  # Удаляем файл из папки media
         except FileNotFoundError:
             pass  # Если файл уже отсутствует, продолжаем
 
-        # Удаляем книгу из библиотеки пользователя
-        user['library'].pop(book_index)
+        # Удаляем книгу из базы данных
+        await delete_book_from_db(book_id)
 
-        # Обновляем сообщение о библиотеке
-        if user['library']:
-            books_list = "\n".join(
-                [f"{idx + 1}. {book['title']}" for idx, book in enumerate(user['library'])]
-            )
-            library_text = f"📚 Ваши книги\n\nВыберите книгу, чтобы выполнить действия с ней"
+        # Обновляем список книг пользователя
+        books = await get_books_for_user(user_id)
+        
+        # Формируем текст и кнопки для обновленного списка книг
+        if books:
+            books_list = "\n".join([f"{idx + 1}. {book['title']}" for idx, book in enumerate(books)])
+            library_text = f"📚 Ваши книги\n\n{books_list}\n\nВыберите книгу, чтобы выполнить действия с ней"
             keyboard = [
-                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{idx}")]
-                for idx, book in enumerate(user['library'])
+                [InlineKeyboardButton(book['title'], callback_data=f"book_options_{book['id']}")]
+                for book in books
             ]
             keyboard.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")])
         else:
@@ -528,30 +571,42 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Отправляем сообщение об успешном удалении книги
         await query.edit_message_text(
-            f"🗑️ Книга '{book_title}' была успешно удалена из вашей библиотеки",
+            f"🗑 Книга '{book_title}' была успешно удалена из вашей библиотеки.",
             reply_markup=reply_markup
         )
 
     elif query.data.startswith("send_book_"):
         user_id = query.from_user.id
-        book_index = int(query.data.split("_")[2])  # Получаем индекс книги
+        book_id = int(query.data.split("_")[2])  # Получаем ID книги из callback_data
         user = await get_user(user_id)
 
-
-        if not user or 'library' not in user or book_index >= len(user['library']):
-            await query.edit_message_text("⚠️ Книга не найдена или удалена")
+        if not user:
+            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
             return
 
-        selected_book = user['library'][book_index]
-        file_path = selected_book['file_path']
+        # Получаем книги пользователя из базы данных
+        books = await get_books_for_user(user_id)
+
+        # Ищем книгу по ее ID
+        selected_book = next((book for book in books if book['id'] == book_id), None)
+
+        if not selected_book:
+            await query.edit_message_text("⚠️ Книга не найдена.")
+            return
+
+        file_path = selected_book['path']  # Путь к файлу
         book_title = selected_book['title']
 
-        # Отправляем книгу пользователю
+        # Проверяем, существует ли файл по пути
         try:
-            await query.message.reply_document(document=open(file_path, 'rb'), filename=f"{book_title}.pdf")
+            # Отправляем книгу пользователю
+            with open(file_path, 'rb') as file:
+                await query.message.reply_document(document=file, filename=f"{book_title}.pdf")
         except FileNotFoundError:
-            await query.edit_message_text("⚠️ Файл книги не найден. Обратитесь к администратору")
+            await query.edit_message_text("⚠️ Файл книги не найден. Обратитесь к администратору.")
             return
 
         # Сообщение об успешной отправке
@@ -2727,48 +2782,28 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     # Разбиваем текст на строки для PDF
     pdf.multi_cell(0, 10, full_text)
 
-    # Проверяем библиотеку пользователя
+    # Проверяем, что пользователь существует
     user = await get_user(user_id)
-
     if not user:
-        if context.user_data.get('book_language') == 'russian':
-            await update.message.reply_text("⚠️ Ошибка: пользователь не найден. Обратитесь к администратору.")
-        else:
-            await update.message.reply_text("⚠️ Error: user not found. Contact your administrator.")
+        error_message = "⚠️ Ошибка: пользователь не найден. Обратитесь к администратору." \
+            if context.user_data.get('book_language') == 'russian' else \
+            "⚠️ Error: user not found. Contact your administrator."
+        await update.message.reply_text(error_message)
         return
 
-    user_dict = dict(user)
-
-    # Убедимся, что library — это список
-    if isinstance(user_dict['library'], str):  # Если это строка
-        user_dict['library'] = json.loads(user_dict['library'])  # Преобразуем строку в список
-    elif not isinstance(user_dict['library'], list):  # Если это не список
-        user_dict['library'] = []  # Инициализируем как пустой список
-
-    # Теперь обработаем каждый элемент в user_dict['library']
-    for i in range(len(user_dict['library'])):
-        if isinstance(user_dict['library'][i], str):  # Если элемент — строка
-            user_dict['library'][i] = {'title': user_dict['library'][i]}  # Преобразуем в словарь
-
-    # Далее проверяем уникальность
+    # Проверяем уникальность названия книги в таблице books
+    conn = await connect_db()
+    suffix = 0
     unique_title = exact_title
-    suffix = 1
-
-    # Проверяем на уникальность название книги
-    while any(book['title'] == unique_title for book in user_dict['library']):
+    while True:
+        query = """
+            SELECT COUNT(*) FROM books WHERE user_id = $1 AND title = $2
+        """
+        count = await conn.fetchval(query, user_id, unique_title)
+        if count == 0:
+            break
         suffix += 1
         unique_title = f"{exact_title}_{suffix}"
-    
-    # Преобразуем в строку JSON с корректной обработкой datetime
-    def datetime_converter(obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()  # Преобразуем datetime в строку ISO
-        raise TypeError(f"Type {obj.__class__.__name__} not serializable")
-
-    library_json = json.dumps(user_dict, default=datetime_converter)
-
-    # После изменений можно записать обратно в базу данных
-    await update_user_library_dict(user_id, library_json)
 
     # Уникальное имя файла
     file_name = f"{user_id}_{unique_title}.pdf"
@@ -2776,6 +2811,14 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
 
     # Сохраняем PDF
     pdf.output(file_path)
+
+    # Добавляем запись о книге в базу данных
+    query = """
+        INSERT INTO books (user_id, title, path)
+        VALUES ($1, $2, $3)
+    """
+    await conn.execute(query, user_id, unique_title, file_path)
+    await close_db(conn)
 
     # Сохраняем PDF в буфер
     pdf_output = io.BytesIO()
@@ -2785,34 +2828,19 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     # Отправляем PDF пользователю
     await update.message.reply_document(document=pdf_output, filename=f"{unique_title}.pdf")
 
-    # Добавляем книгу в библиотеку
-    user_dict['library'].append({
-        "title": unique_title,
-        "file_path": file_path,  # Сохраняем полный путь к файлу
-        "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-
-    # Обновляем библиотеку в базе данных
-    library_json = json.dumps(user_dict, default=datetime_converter)
-    await update_user_library_dict(user_id, library_json)
-
     # Уведомляем пользователя
-    if context.user_data.get('book_language') == 'russian':
-        await update.message.reply_text(
-            f"📚 Книга {unique_title} готова! 🎉\n📚 Книга успешно добавлена в вашу библиотеку! 🎉",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library'),
-                InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
-            ]])
-        )
-    else:
-        await update.message.reply_text(
-            f"📚 Book {unique_title} is ready! 🎉\n📚 The book has been successfully added to your library! 🎉",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📚 My library", callback_data='my_library'),
-                InlineKeyboardButton("🔙 Back to menu", callback_data='menu')
-            ]])
-        )
+    message_text = (
+        f"📚 Книга {unique_title} готова! 🎉\n📚 Книга успешно добавлена в вашу библиотеку! 🎉"
+        if context.user_data.get('book_language') == 'russian' else
+        f"📚 Book {unique_title} is ready! 🎉\n📚 The book has been successfully added to your library! 🎉"
+    )
+    await update.message.reply_text(
+        message_text,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library'),
+            InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
+        ]])
+    )
 
 async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_pages: int):
     """Асинхронная обработка создания книги."""
