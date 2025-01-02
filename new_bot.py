@@ -2719,7 +2719,6 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Проверяем, нужно ли сбросить лимит
             user = await get_user(user_id)
             if user['reset_time'] and current_time >= user['reset_time']:
-                print('мы сюда заходим')
                 await update_count_words(user_id, 0)
                 await update_reset_time(user_id, None)
 
@@ -3219,8 +3218,7 @@ async def search_books(update, context):
     )
 
     today_date = datetime.now().date()
-    print(user.get('last_book_date'))
-    print(today_date)
+
     if user.get('last_book_date') != today_date:
         await update_user_last_book_date(user_id, today_date)
         #user['last_book_date'] = today_date
