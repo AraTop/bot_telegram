@@ -2770,21 +2770,34 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def generate_pdf_and_send(update, context, full_text, exact_title):
     user_id = update.message.from_user.id
+
     # Создание PDF
     pdf = FPDF()
     pdf.add_font('Garamond', '', 'Garamond.ttf', uni=True)  # Подключение шрифта Garamond
-    pdf.set_font('Garamond', size=18)  # Установка шрифта и размера
+    pdf.add_font('GaramondBold', '', 'Garamond-Bold.ttf', uni=True)  # Подключение жирного шрифта
     pdf.add_page()
 
-    # Разбиваем текст на строки для PDF
-    pdf.multi_cell(0, 10, full_text)
+    # Обработка текста с заменой ** на жирный шрифт
+    parts = re.split(r'(\*\*.*?\*\*)', full_text)  # Разбиваем текст на части
+    for part in parts:
+        if part.startswith("**") and part.endswith("**"):  # Если это жирный текст
+            pdf.set_font('GaramondBold', size=16)  # Используем жирный шрифт
+            if part.endswith('.'):  # Если текст заканчивается на точку, убираем её
+                part = part[:-1]
+                
+            pdf.multi_cell(0, 9, part.strip('*'), align='L')  # Убираем звёздочки и добавляем текст
+        else:
+            pdf.set_font('Garamond', size=18)  # Обычный шрифт
+            pdf.multi_cell(0, 9, part, align='L')  # Добавляем обычный текст
 
     # Проверяем, что пользователь существует
     user = await get_user(user_id)
     if not user:
-        error_message = "⚠️ Ошибка: пользователь не найден. Обратитесь к администратору." \
-            if context.user_data.get('book_language') == 'russian' else \
+        error_message = (
+            "⚠️ Ошибка: пользователь не найден. Обратитесь к администратору."
+            if context.user_data.get('book_language') == 'russian' else
             "⚠️ Error: user not found. Contact your administrator."
+        )
         await update.message.reply_text(error_message)
         return
 
@@ -2833,10 +2846,12 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     )
     await update.message.reply_text(
         message_text,
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library'),
-            InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
-        ]])
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📚 Моя библиотека", callback_data='my_library'),
+                InlineKeyboardButton("🔙 Назад в меню", callback_data='menu')
+            ]
+        ])
     )
 
 async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_pages: int):
@@ -2898,14 +2913,14 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
                     f"Книга '{exact_title}' содержит {num_pages} страниц."
                     f"Мы сейчас рассматриваем часть {part_number}, подчасть {subpart_index}/{subparts[index - 1]}."
                     f"В этой подчасти должно быть 190 слов."
-                    "Учитывая это, напишите о содержании данной подчасти книги. И не пиши подчасть и часть в тексте"
+                    "Учитывая это, напишите о содержании данной главы книги. Выделяя темным шрифтом (**какой текст хочешь сделать выделеным**) только важные моменты и начало новой главы."
                 )
             else:
                 prompt = (
                     f"Book '{exact_title}' contains {num_pages} pages."
                     f"We are now considering part {part_number}, subpart {subpart_index}/{subparts[index - 1]}."
                     f"This subpart should be 190 words long."
-                    "With this in mind, write about the content of this sub-part of the book. And do not write subpart and part in the text"
+                    "With this in mind, write about the contents of this chapter of the book. Highlighting in a dark font (**what text you want to make highlighted**) only important points and the beginning of a new chapter."
                 )
 
             response = await openai.ChatCompletion.acreate(
