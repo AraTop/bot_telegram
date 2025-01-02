@@ -470,7 +470,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Получаем список книг пользователя из базы данных
         user_library = await get_user_library(user_id)
-        print(user_library)
         if user_library:
             # Если у пользователя есть книги
             books_list = "\n".join(
@@ -1684,7 +1683,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
             (sub for sub in user_subscriptions if sub["end_date"] >= datetime.now().date()), 
             None
         )
-        print(user_subscriptions)
         if subscription_search_book_is_true:
             # Сообщение об ограничениях для пользователей без подписки
             if not active_subscription:
@@ -2318,7 +2316,7 @@ async def send_notification_to_users(update: Update, context: ContextTypes.DEFAU
                 reply_markup=reply_markup,
             )
         except Exception as e:
-            print(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
+            #print(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
             pass
 
 async def search_user(update, context):
