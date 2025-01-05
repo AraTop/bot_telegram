@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "your_project_name"
+version = "0.1.0"
+description = "A description of your project"
+authors = [{name = "Grigory", email = "lololohka057@gmail.com"}]
+dependencies = [
+    "python-telegram-bot",
+    "asyncpg",
+    "fpdf",
+    "yookassa"
+]
