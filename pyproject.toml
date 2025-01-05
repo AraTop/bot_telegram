@@ -3,8 +3,8 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "your_project_name"
-version = "0.1.0"
+name = "bot_telegram"  # Укажите имя вашего проекта
+version = "0.1.0"           # Укажите версию проекта
 description = "A description of your project"
 authors = [{name = "Grigory", email = "lololohka057@gmail.com"}]
 dependencies = [
