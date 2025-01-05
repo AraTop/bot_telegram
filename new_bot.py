@@ -1,9 +1,8 @@
-import json
 import math
 import random
 import openai
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, KeyboardButton, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application, MessageHandler, filters, CommandHandler, ContextTypes, CallbackQueryHandler
 )
@@ -18,16 +17,24 @@ import os
 from yookassa import Configuration, Payment
 import uuid
 import asyncpg
+from urllib.parse import urlparse
 
 load_dotenv()
 
-DB_CONFIG = {
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": os.getenv("DB_NAME"),
-    "host": os.getenv("DB_HOST"),
-    "port": int(os.getenv("DB_PORT")),
-}
+db_url = os.getenv("DATABASE_URL")
+
+if db_url:
+    result = urlparse(db_url)
+    DB_CONFIG = {
+        "user": result.username,
+        "password": result.password,
+        "database": result.path[1:],
+        "host": result.hostname,
+        "port": result.port,
+    }
+else:
+    raise ValueError("Переменная окружения DATABASE_URL не найдена")
+
 db_pool = None
 Configuration.account_id = os.getenv("account_id")
 Configuration.secret_key = os.getenv("secret_key")
