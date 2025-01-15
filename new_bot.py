@@ -43,7 +43,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # переменые для управление из админ панели
-ADMINS = list(map(int, os.getenv("ADMINS", "").split(',')))
+ADMINS = [5706003073,2125819462]
 subscription_chat_with_ai_is_true = True
 subscription_search_book_is_true = True
 count_limit_chat_with_ai = 10
