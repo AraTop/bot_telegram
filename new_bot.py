@@ -1735,7 +1735,6 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         game_keyboard = [
             [InlineKeyboardButton("🎲 Угадай автора", callback_data="Guess_the_author")],
             [InlineKeyboardButton("🃏 Угадай дату", callback_data="Guess_the_date")],
-            [InlineKeyboardButton("🎮 Игра 3", callback_data="game_3")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
         ]
         reply_markup = InlineKeyboardMarkup(game_keyboard)
