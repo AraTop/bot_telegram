@@ -21,19 +21,20 @@ from urllib.parse import urlparse
 
 load_dotenv()
 
-db_url = os.getenv("DATABASE_URL")
-
-if db_url:
-    result = urlparse(db_url)
-    DB_CONFIG = {
-        "user": result.username,
-        "password": result.password,
-        "database": result.path[1:],
-        "host": result.hostname,
-        "port": result.port,
+#db_url = os.getenv("DATABASE_URL")
+#print(db_url)
+#if db_url:
+    #result = urlparse(db_url)
+    #pass
+#else:
+    #raise ValueError("Переменная окружения DATABASE_URL не найдена")
+DB_CONFIG = {
+        "user": 'postgres',
+        "password": 'ztakTFKuZaJkPyFjBzYdRAFPBvOGOJep',
+        "database": 'railway',
+        "host": 'postgres.railway.internal',
+        "port": 5432,
     }
-else:
-    raise ValueError("Переменная окружения DATABASE_URL не найдена")
 
 db_pool = None
 Configuration.account_id = os.getenv("account_id")
