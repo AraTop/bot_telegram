@@ -3029,21 +3029,11 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
     # Создание PDF
     pdf = FPDF()
     pdf.add_font('Garamond', '', 'Garamond.ttf', uni=True)  # Подключение шрифта Garamond
-    pdf.add_font('GaramondBold', '', 'Garamond-Bold.ttf', uni=True)  # Подключение жирного шрифта
     pdf.add_page()
 
-    # Обработка текста с заменой ** на жирный шрифт
-    parts = re.split(r'(\*\*.*?\*\*)', full_text)  # Разбиваем текст на части
-    for part in parts:
-        if part.startswith("**") and part.endswith("**"):  # Если это жирный текст
-            pdf.set_font('GaramondBold', size=16)  # Используем жирный шрифт
-            if part.endswith('.'):  # Если текст заканчивается на точку, убираем её
-                part = part[:-1]
-                
-            pdf.multi_cell(0, 9, part.strip('*'), align='L')  # Убираем звёздочки и добавляем текст
-        else:
-            pdf.set_font('Garamond', size=18)  # Обычный шрифт
-            pdf.multi_cell(0, 9, part, align='L')  # Добавляем обычный текст
+     # Добавление текста в PDF без обработки жирного текста
+    pdf.set_font('Garamond', size=18)  # Устанавливаем обычный шрифт
+    pdf.multi_cell(0, 9, full_text, align='L')  # Добавляем текст целиком
 
     # Проверяем, что пользователь существует
     user = await get_user(user_id)
@@ -3172,14 +3162,14 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
                     f"Книга '{exact_title}' содержит {num_pages} страниц."
                     f"Мы сейчас рассматриваем часть {part_number}, подчасть {subpart_index}/{subparts[index - 1]}."
                     f"В этой подчасти должно быть 190 слов."
-                    "Учитывая это, напишите о содержании данной главы книги. Выделяя темным шрифтом (**какой текст хочешь сделать выделеным**) только важные моменты и начало новой главы."
+                    "Учитывая это, напишите о содержании данной главы книги."
                 )
             else:
                 prompt = (
                     f"Book '{exact_title}' contains {num_pages} pages."
                     f"We are now considering part {part_number}, subpart {subpart_index}/{subparts[index - 1]}."
                     f"This subpart should be 190 words long."
-                    "With this in mind, write about the contents of this chapter of the book. Highlighting in a dark font (**what text you want to make highlighted**) only important points and the beginning of a new chapter."
+                    "With this in mind, write about the contents of this chapter of the book."
                 )
 
             response = await openai.ChatCompletion.acreate(
