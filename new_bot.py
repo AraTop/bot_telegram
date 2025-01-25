@@ -3464,12 +3464,12 @@ async def search_books(update, context):
 
         if context.user_data.get('book_language') == 'russian':
             await update.message.reply_text(
-                "⚠️ Вы уже запустили процесс создания книги. Пожалуйста, подождите, пока завершится обработка предыдущей.",
+                "⚠️ Вы уже запустили процесс создания книги.\n📚 Пожалуйста, подождите, пока завершится обработка текущей задачи.\n❗️Если возникли вопросы или проблемы, мы всегда готовы помочь — просто свяжитесь с нами!😊",
                 reply_markup=reply_markup
             )
         else:
             await update.message.reply_text(
-                "⚠️ You have already started the process of creating a book. Please wait while the previous one is processed.",
+                "⚠️You have already started the book creation process.\n📚 Please wait until the current task is completed.\n❗️If you have any questions or problems, we are always ready to help - just contact us!😊",
                 reply_markup=reply_markup
             )
         return
