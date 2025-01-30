@@ -3484,11 +3484,17 @@ async def search_books(update, context):
 
     today_date = datetime.now().date()
     print('today_date -', today_date)
-    print(user.get('last_book_date'))
-    if user.get('last_book_date') != today_date:
+
+    # Преобразуем last_book_date в дату без времени, если он существует
+    last_book_date = user.get('last_book_date')
+    if last_book_date:
+        last_book_date = last_book_date.date()  # Убираем время, оставляем только дату
+
+    print('last_book_date -', last_book_date)
+
+    # Сравниваем даты без времени
+    if last_book_date != today_date:
         await update_user_last_book_date(user_id, today_date)
-        #user['last_book_date'] = today_date
-        #user['daily_book_count'] = 0
         await update_user_daily_book_count(user_id, 0)
 
     # Проверка лимита на книги за день
