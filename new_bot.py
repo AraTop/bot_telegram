@@ -3117,7 +3117,10 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
     total_words = num_pages * 140  # общее количество слов
     total_words_in_dop = 0
     # Получаем список ключей, где значение True
+    print('process_book')
     selected_options_keys = [key for key, value in context.user_data.get('options', {}).items() if value]
+    print('selected_options_keys -', selected_options_keys)
+
     full_total_words = total_words
     if selected_options_keys:
         for option in selected_options_keys:
@@ -3190,8 +3193,6 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
                         f"⏳ Processing part {index}/7, subpart {subpart_index}/{subparts[index - 1]}"
                     )
 
-    # Получаем список ключей, где значение True
-    selected_options_keys = [key for key, value in context.user_data.get('options', {}).items() if value]
     if selected_options_keys:
         apend_ture = False
         for option in selected_options_keys:
@@ -3436,6 +3437,8 @@ async def process_book(update: Update, context: ContextTypes.DEFAULT_TYPE, num_p
 
     current_book_count = user['daily_book_count']
     new_book_count = current_book_count + 1
+    print('daily_book_count -', current_book_count)
+    print('new_book_count -', new_book_count)
     # Обновляем значение в базе данных
     await update_user_daily_book_count(user_id, new_book_count)
     await update_user_process_book(user_id, False)
@@ -3480,7 +3483,8 @@ async def search_books(update, context):
     )
 
     today_date = datetime.now().date()
-
+    print('today_date -', today_date)
+    print(user.get('last_book_date'))
     if user.get('last_book_date') != today_date:
         await update_user_last_book_date(user_id, today_date)
         #user['last_book_date'] = today_date
