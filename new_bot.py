@@ -2980,6 +2980,8 @@ async def chat_with_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user['count_words'] > count_limit_chat_with_ai:
                 # Устанавливаем время сброса лимита
                 user = await get_user(user_id)
+                print('reset_time -', user.get('reset_time'))
+                
                 if not user['reset_time']:
                     date = current_time + timedelta(hours=wait_hour)
                     date_naive = date.replace(tzinfo=None)  # Убираем временную зону
