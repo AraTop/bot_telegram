@@ -339,7 +339,7 @@ async def generate_random_quote_question_with_options_async():
     )
 
     response = await openai.ChatCompletion.acreate(
-        model="gpt-3.5-turbo",
+        model="gpt-4",
         messages=[
             {"role": "system", "content": "Ты помощник для создания вопросов викторин на русском языке."},
             {"role": "user", "content": prompt}
@@ -1734,107 +1734,12 @@ async def handle_menu_selection(update: Update, context: ContextTypes.DEFAULT_TY
         # Клавиатура с кнопками для игр и кнопкой "Назад в меню"
         game_keyboard = [
             [InlineKeyboardButton("🎲 Угадай автора", callback_data="Guess_the_author")],
-            [InlineKeyboardButton("🃏 Угадай дату", callback_data="Guess_the_date")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="menu")]
         ]
         reply_markup = InlineKeyboardMarkup(game_keyboard)
 
         # Отправка сообщения с кнопками
         await query.edit_message_text(game_text, reply_markup=reply_markup)
-
-    elif query.data == "Guess_the_date":
-        context.user_data['correct_answer_index'] = None  # Сброс индекса правильного ответа
-        context.user_data['options'] = []  # Сброс списка вариантов
-
-        user_id = update.callback_query.from_user.id
-        # Ищем пользователя
-        user = await get_user(user_id)
-
-        if not user:
-            await query.edit_message_text("⚠️ Пользователь не найден. Обратитесь к администратору.")
-            return
-
-        instructions_text = (
-            "🔍 Выберите правильную дату из предложенных вариантов ниже. 📝\n"
-            "💡 Удачи! 🎉"
-        )
-
-        try:
-            # Генерация вопроса и вариантов ответов
-            question_text, correct_answer, wrong_answers = await generate_random_date_question_with_options_async()
-
-            # Убедимся, что в question_text нет лишнего вопроса
-            if question_text.strip() == "":
-                raise ValueError("Вопрос не был корректно сгенерирован. Попробуйте снова.")
-
-            # Сохраняем правильный ответ и его индекс в пользовательских данных
-            context.user_data['correct_answer'] = correct_answer
-            options = wrong_answers + [correct_answer]  # Добавляем правильный ответ
-            random.shuffle(options)  # Перемешиваем варианты
-
-            # Сохраняем варианты в контексте
-            context.user_data['options'] = options
-
-            # Индекс правильного ответа в случайном порядке
-            correct_answer_index = options.index(correct_answer)
-            context.user_data['correct_answer_index'] = correct_answer_index
-
-            # Добавляем нумерацию к вариантам
-            numbered_options = [f"{i + 1}. {option}" for i, option in enumerate(options)]
-
-            # Создаём кнопки с короткими и уникальными callback_data
-            options_keyboard = [
-                [InlineKeyboardButton(text, callback_data=f"answer1:{i+1}")]  # Нумерация с 1
-                for i, text in enumerate(numbered_options)
-            ]
-            options_keyboard.append([InlineKeyboardButton("🔄 Другой вопрос", callback_data="Guess_the_date")])
-            options_keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="game")])
-            reply_markup = InlineKeyboardMarkup(options_keyboard)
-
-            # Отправляем условия и сам вопрос с кнопками
-            await query.edit_message_text(instructions_text + "\n\n" + question_text, reply_markup=reply_markup)
-        except ValueError as e:
-            await query.edit_message_text(f"❌ Ошибка: {str(e)}")
-
-    elif query.data.startswith("answer1:"):
-        # Извлекаем выбранный ответ из callback_data
-        selected_option_index = int(query.data.split("answer1:")[1]) - 1  # Преобразуем в индекс (нумерация с 1)
-
-        correct_answer_index = context.user_data.get('correct_answer_index', None)
-        options = context.user_data.get("options", [])
-
-        # Проверка на существование правильного индекса и списка вариантов
-        if correct_answer_index is None or selected_option_index < 0 or selected_option_index >= len(options):
-            await query.edit_message_text("❌ Ошибка: Неверный индекс ответа. Попробуйте снова.")
-            return
-
-        correct_answer = context.user_data.get("correct_answer", "")
-
-        if selected_option_index == correct_answer_index:
-            # Сообщение о правильном ответе
-            await query.edit_message_text("✅ Правильно! 🎉 Идем дальше?")
-
-            # Клавиатура для следующего вопроса или выхода
-            next_keyboard = [
-                [InlineKeyboardButton("➡️ Дальше", callback_data="Guess_the_date")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="game")]
-            ]
-            reply_markup = InlineKeyboardMarkup(next_keyboard)
-        else:
-            # Сообщение о неправильном ответе
-            await query.edit_message_text(
-                f"❌ Неправильно. Правильный ответ: **{correct_answer}**.\nПопробуйте ещё раз!"
-            )
-
-            # Клавиатура для повторной попытки
-            retry_keyboard = [
-                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="Guess_the_date")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="game")]
-            ]
-            reply_markup = InlineKeyboardMarkup(retry_keyboard)
-
-        # Отправляем обновлённые кнопки
-        await query.edit_message_reply_markup(reply_markup=reply_markup)
 
     elif query.data == "Guess_the_author":
         context.user_data['correct_answer'] = None
