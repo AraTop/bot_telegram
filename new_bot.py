@@ -2499,7 +2499,7 @@ async def search_user(update, context):
     # Ищем пользователя по user_id или username
     user = None
     if user_input.isdigit():  # Если это user_id (цифры), ищем по ID
-        user = await get_user(user_id)
+        user = await get_user(int(user_input))
     else:  # Если это username, ищем по username
         user = await get_user_for_username(user_input)
 
