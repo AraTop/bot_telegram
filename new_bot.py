@@ -2495,7 +2495,7 @@ async def search_user(update, context):
 
     # Получаем данные от пользователя: user_id или username
     user_input = update.message.text.strip()  # Получаем текст, который ввел пользователь (например, user_id или username)
-
+    print(user_input)
     # Ищем пользователя по user_id или username
     user = None
     if user_input.isdigit():  # Если это user_id (цифры), ищем по ID
