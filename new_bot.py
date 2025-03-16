@@ -2969,14 +2969,18 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
 
     # Уникальное имя файла
     file_name = f"{user_id}_{unique_title}.pdf"
-    file_path = f"app/storage/library/{file_name}"
+   # Путь к Volume
+    volume_path = "/app/storage/library"
+    file_path = os.path.join(volume_path, file_name)
 
-    # Проверяем, существует ли каталог 'app/storage/library', если нет — создаем
-    if not os.path.exists('app/storage/library'):
-        os.makedirs('app/storage/library')
-        
+    # Проверяем, существует ли каталог, если нет — создаем
+    if not os.path.exists(volume_path):
+        os.makedirs(volume_path)
+
     # Сохраняем PDF
     pdf.output(file_path)
+
+    print(f"Файл сохранен в: {file_path}")
 
     # Добавляем запись о книге в базу данных
     query = """
