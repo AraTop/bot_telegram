@@ -2969,11 +2969,11 @@ async def generate_pdf_and_send(update, context, full_text, exact_title):
 
     # Уникальное имя файла
     file_name = f"{user_id}_{unique_title}.pdf"
-    file_path = f"media/{file_name}"
+    file_path = f"app/storage/library/{file_name}"
 
-    # Проверяем, существует ли каталог 'media', если нет — создаем
-    if not os.path.exists('media'):
-        os.makedirs('media')
+    # Проверяем, существует ли каталог 'app/storage/library', если нет — создаем
+    if not os.path.exists('app/storage/library'):
+        os.makedirs('app/storage/library')
         
     # Сохраняем PDF
     pdf.output(file_path)
